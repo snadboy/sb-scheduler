@@ -228,79 +228,6 @@ def action_has_effect(action: dict, hass: HomeAssistant):
 
 
 class ActionHandler:
-    async def async_execute_task(self, task: dict):
-        """Run one action, reporting failures instead of swallowing them.
-
-        Upstream calls async_call_from_config non-blocking and never learns
-        whether the call succeeded: a renamed entity or a removed service
-        leaves the schedule looking like it ran. Here the obvious causes are
-        checked up front and anything raised is logged, published as a
-        `scheduler_action_failed` event, and (optionally) raised as a
-        persistent notification.
-        """
-        service = task.get(CONF_ACTION) or ""
-        entity_id = task.get(ATTR_ENTITY_ID)
-
-        reason = None
-        if "." not in service:
-            reason = "'{}' is not a valid action".format(service)
-        else:
-            domain, service_name = service.split(".", 1)
-            if not self.hass.services.has_service(domain, service_name):
-                reason = "action '{}' does not exist".format(service)
-            elif entity_id:
-                missing = [
-                    e
-                    for e in (entity_id if isinstance(entity_id, list) else [entity_id])
-                    if self.hass.states.get(e) is None
-                ]
-                if missing:
-                    reason = "entity {} does not exist".format(", ".join(missing))
-
-        if reason is None:
-            try:
-                await async_call_from_config(self.hass, task)
-                return True
-            except Exception as err:  # noqa: BLE001 - report anything the call raises
-                reason = str(err) or err.__class__.__name__
-
-        self.async_report_failure(service, entity_id, reason)
-        return False
-
-    @callback
-    def async_report_failure(self, service, entity_id, reason: str):
-        """Make a failed action visible: log, event, optional notification."""
-        _LOGGER.error(
-            "[{}]: Action '{}'{} failed: {}".format(
-                self.id,
-                service,
-                " on {}".format(entity_id) if entity_id else "",
-                reason,
-            )
-        )
-        self.hass.bus.async_fire(
-            const.EVENT_ACTION_FAILED,
-            {
-                "schedule_id": self.id,
-                "action": service,
-                ATTR_ENTITY_ID: entity_id,
-                "reason": reason,
-            },
-        )
-        if not const.notify_on_failure(self.hass):
-            return
-        persistent_notification.async_create(
-            self.hass,
-            "Schedule `{}` could not run `{}`{}.\n\n{}".format(
-                self.id,
-                service,
-                " on `{}`".format(entity_id) if entity_id else "",
-                reason,
-            ),
-            title="Scheduler action failed",
-            notification_id="scheduler_failed_{}".format(self.id),
-        )
-
     def __init__(self, hass: HomeAssistant, schedule_id: str):
         """init"""
         self.hass = hass
@@ -408,6 +335,8 @@ class ActionQueue:
         self.queue_busy = False
         self._track_conditions = track_conditions
         self._wait_for_available = True
+        self._unavailable_reason = None
+        self._failure_reported = False
 
         for condition in conditions:
             if (
@@ -519,6 +448,7 @@ class ActionQueue:
             None,
         )
         if failed_action:
+            self._unavailable_reason = "action '{}' is unavailable".format(failed_action)
             _LOGGER.debug(
                 "[{}]: Action {} is unavailable, scheduled task cannot be executed".format(
                     self.id, failed_action
@@ -537,6 +467,7 @@ class ActionQueue:
             None,
         )
         if failed_entity:
+            self._unavailable_reason = "entity '{}' is unavailable".format(failed_entity)
             _LOGGER.debug(
                 "[{}]: Entity {} is unavailable, scheduled action cannot be executed".format(
                     self.id, failed_entity
@@ -547,11 +478,87 @@ class ActionQueue:
         if self._wait_for_available:
             self._wait_for_available = False
 
+        self._unavailable_reason = None
+        self._failure_reported = False
         return True
+
+    async def async_execute_task(self, task: dict):
+        """Run one action, reporting failures instead of swallowing them.
+
+        Upstream calls async_call_from_config non-blocking and never learns
+        whether the call succeeded: a removed action or a bad payload leaves
+        the schedule looking like it ran. Dispatch stays non-blocking, but the
+        obvious causes are checked first and anything raised is reported.
+        """
+        service = task.get(CONF_ACTION) or ""
+        entity_id = task.get(ATTR_ENTITY_ID)
+
+        reason = None
+        if "." not in service:
+            reason = "'{}' is not a valid action".format(service)
+        else:
+            domain, service_name = service.split(".", 1)
+            if not self.hass.services.has_service(domain, service_name):
+                reason = "action '{}' does not exist".format(service)
+
+        if reason is None:
+            try:
+                await async_call_from_config(self.hass, task)
+                return True
+            except Exception as err:  # noqa: BLE001 - surface whatever the call raises
+                reason = str(err) or err.__class__.__name__
+
+        self.async_report_failure(service, entity_id, reason)
+        return False
+
+    @callback
+    def async_report_failure(self, service, entity_id, reason: str):
+        """Make a failed or missed action visible."""
+        target = ", ".join(entity_id) if isinstance(entity_id, list) else entity_id
+        _LOGGER.error(
+            "[{}]: Action '{}'{} failed: {}".format(
+                self.id, service, " on {}".format(target) if target else "", reason
+            )
+        )
+        self.hass.bus.async_fire(
+            const.EVENT_ACTION_FAILED,
+            {
+                "schedule_id": self.id,
+                "action": service,
+                ATTR_ENTITY_ID: entity_id,
+                "reason": reason,
+            },
+        )
+        if not const.notify_on_failure(self.hass):
+            return
+        persistent_notification.async_create(
+            self.hass,
+            "Schedule `{}` could not run `{}`{}.\n\n{}".format(
+                self.id, service, " on `{}`".format(target) if target else "", reason
+            ),
+            title="Scheduler action failed",
+            notification_id="scheduler_failed_{}".format(self.id),
+        )
 
     async def async_process_queue(self, task_idx=0):
         """walk through the list of tasks and execute the ones that are ready"""
-        if self.queue_busy or not self.is_available():
+        if self.queue_busy:
+            return
+        if not self.is_available():
+            # Upstream returns here having logged only at debug level, which is
+            # the silent failure users report: the schedule looks like it ran.
+            # The queue still waits for the target to come back, but the missed
+            # execution is now visible.
+            if not self._failure_reported:
+                self._failure_reported = True
+                self.async_report_failure(
+                    ", ".join(a[CONF_ACTION] for a in self._queue) or "action",
+                    self._action_entities,
+                    "{} - the scheduled action did not run (it will be retried if "
+                    "the target becomes available)".format(
+                        self._unavailable_reason or "target unavailable"
+                    ),
+                )
             return
 
         self.queue_busy = True
