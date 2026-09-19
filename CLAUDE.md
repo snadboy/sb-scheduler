@@ -13,7 +13,48 @@ attribution chain stays intact. **No upstream merge path is planned.**
 | Domain | `sb_scheduler` (NOT `scheduler` — see below) |
 | License | GPL-3.0, inherited and permanent |
 | `fork` remote | github.com/snadboy/sb-scheduler-component — the frozen predecessor |
-| Status | Phase 0 not started. The tree is still the old `scheduler` component, unmodified. |
+| Status | **Phase 0 done and verified live.** Next: Phase 1 (schedules). |
+
+## Where things are
+
+- `custom_components/sb_scheduler/` — the live Phase 0 integration (day-sets).
+- `reference/scheduler-component/` — the inherited tree, **deliberately outside
+  `custom_components/`** so HACS cannot install a second `scheduler` domain
+  alongside the running one. Phase 1 ports `actions.py`, `store.py`,
+  `websockets.py` and `switch.py` from here.
+- `tests/test_day_set.py` — runs with plain `python3`, no HA needed. It stubs the
+  few HA surfaces `day_set.py` touches, so the real evaluation logic is exercised
+  offline. 31 checks.
+
+## Deploying to HA (no HACS yet)
+
+`scp` fails — the HAOS SSH add-on has no sftp subsystem. Pipe through stdin:
+
+```bash
+tar czf /tmp/sb.tgz -C custom_components sb_scheduler
+ssh snadboy@homeassistant "cat > /tmp/sb.tgz" < /tmp/sb.tgz
+ssh snadboy@homeassistant "cd /config/custom_components && tar xzf /tmp/sb.tgz && rm /tmp/sb.tgz"
+```
+
+`rm -rf` on the deployed dir fails: `__pycache__` is root-owned (HA runs as root
+in the container) while the SSH user is `snadboy`. Extract over the top instead —
+stale `.pyc` files are invalidated by source mtime.
+
+**Reloading the config entry does NOT re-import changed Python.** A code change
+needs a full restart, or you will verify the old behaviour and believe it. This
+cost a cycle on the slugify fix.
+
+## Phase 0 notes
+
+- Day-set ids are **slugs of the name** (`school_day`), not random tokens.
+  Phase 1 schedules reference day-sets by id, so an opaque id would end up in
+  every schedule's config and every service call.
+- Removing a day-set leaves an orphaned entity registry entry, so the next
+  day-set with that name lands on `_2`. `_purge_orphaned_entities()` on setup
+  fixes it — HA only cleans the registry when the whole entry is removed.
+- The 400-day horizon is the point, not a magic number: a school year has a
+  ~10 week summer gap and upstream's 16-iteration cap is the bug being replaced.
+  `next_date_on_or_after` logs an ERROR rather than returning a silent `None`.
 
 ## The coexistence rule
 

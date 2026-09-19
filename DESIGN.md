@@ -1,6 +1,6 @@
 # sb_scheduler — design
 
-**Status:** design agreed 2026-09-19, not yet implemented.
+**Status:** Phase 0 implemented and verified live 2026-09-19. Phase 1 next.
 **One-line goal:** one visual place for every time-based rule — "do X at time T on day-set S".
 
 ## Why not keep extending scheduler-component
@@ -171,7 +171,7 @@ skips it. This is the date-queryable source upstream never consumed.
 
 ### Published as calendars
 
-Every day-set is also exposed as `calendar.sb_<id>`. Costs little, and makes a
+Every day-set is also exposed as `calendar.<id>`. Costs little, and makes a
 day-set debuggable by looking at it in HA — which matters the first time School
 Day disagrees with you.
 
@@ -193,7 +193,7 @@ window, and the old integration keeps running the real ones meanwhile.
 
 | | Deliverable | Independently useful? |
 |---|---|---|
-| **0** | Day-set library: config-entry options UI, calendar backing, `next_date_on_or_after`, prefetch cache, `calendar.sb_*` entities | Yes — usable by automations and dashboards with no scheduler at all |
+| **0** | ~~Day-set library: config-entry options UI, calendar backing, `next_date_on_or_after`, prefetch cache, calendar entities~~ **DONE** | Yes — usable by automations and dashboards with no scheduler at all |
 | **1** | `sb_scheduler` integration: new schema, new timing core, execution inherited | Yes — schedules run; created via services |
 | **2** | `sb-scheduler-card` | The new shapes become reachable |
 | **3** | Re-create the 3–4 live schedules, uninstall `sb-scheduler-component` | Done |
