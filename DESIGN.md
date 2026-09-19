@@ -1,6 +1,6 @@
 # sb_scheduler — design
 
-**Status:** Phase 0 implemented and verified live 2026-09-19. Phase 1 next.
+**Status:** Phases 0 and 1 implemented and verified live 2026-09-19. Phase 2 (the card) next.
 **One-line goal:** one visual place for every time-based rule — "do X at time T on day-set S".
 
 ## Why not keep extending scheduler-component
@@ -57,30 +57,29 @@ Two XOR choices. Symmetry is deliberate: it makes the card two radio groups.
 schedule:
   day_set: workday            # exactly one — see below
   pattern:                    # exactly one of:
-    occurrences:              # one or more; each a point or a range
-      - "06:30"
-      - { start: "06:00", stop: "07:00" }
+    occurrences: ["06:30", "18:00"]     # one or more times of day
     # — or —
-    interval:                 # fire at start, then every N until stop
+    interval:                           # fire at start, then every N until stop
       start: "09:00"
       stop:  "13:00"
-      every: "15m"
+      every_minutes: 15
   actions: [...]              # unchanged from upstream
   conditions: [...]           # unchanged from upstream
 ```
 
-`interval` is **start-only** — "every 15 min from 09:00 until 13:00, run action
-X" fires 17 times and emits no stop action. Ranged behaviour (irrigation's
-"on at 06:00, off at 07:00") belongs to `occurrences`, which inherits upstream's
-existing timeslot start/stop semantics. Keeping the two apart avoids inventing a
-per-occurrence duration nobody asked for.
+**Both patterns are start-only.** "Every 15 min from 09:00 until 13:00" fires
+17 times and emits no stop action; occurrences are points in time, not ranges.
+That is the spec as stated — ranged behaviour (irrigation's "on at 06:00, off at
+07:00") was my addition inherited from upstream's timeslots, and is NOT built.
+If it is wanted, it is a second action list at a stop time, not a duration.
 
 `specific_days` is one of the day-set options and reveals the seven weekday
 checkboxes, so nothing the old model could express is lost.
 
-An `interval` pattern expands to concrete `(start, stop)` occurrences at
-timer-arming time, not in storage — so the stored config stays small and the
-execution path is the existing timeslot machinery.
+An `interval` pattern expands to concrete times at timer-arming time, not in
+storage — so the stored config stays "every 15 minutes from 09:00 to 13:00"
+rather than seventeen timestamps. Capped at `MAX_INTERVAL_OCCURRENCES` (288) per
+day so `every_minutes: 1` cannot silently produce a firing every minute.
 
 ## Day-sets
 
@@ -111,7 +110,7 @@ day_set:
 This is the answer to "can't we just configure weekdays plus a list of
 no-school days" — **yes, and that removes the need for a school integration
 entirely.** No `calendar.il_cusd_304` to hand-populate: the dates live in the
-day-set options flow, and the day-set still surfaces as `calendar.sb_school_day`
+day-set options flow, and the day-set still surfaces as `calendar.school_day`
 for inspection. Ranges make summer one entry rather than sixty.
 
 **Do not rebuild Trash Day.** `snadboy/ha-sb-trash-day` already computes
@@ -148,9 +147,10 @@ class DaySet:
 
 `day_in_weekdays` being synchronous is why upstream can't do this. We prefetch:
 
-- window: 120 days forward, extended on demand if `next_date_on_or_after` walks
-  off the end (guard with an absolute cap, e.g. 800 days, then log an ERROR —
-  never return `None` silently, which is the upstream failure mode).
+- window: **400 days forward** (`HORIZON_DAYS`), recomputed whole rather than
+  extended on demand — simpler, and one calendar query per source covers it.
+  Running past it logs an ERROR and returns `None`; it never returns a wrong
+  date, and never a silent `None`, which is the upstream failure mode.
 - refresh: daily, plus on `calendar` entity state change for any source calendar.
 - **multi-day events cover `[start, end)`**, not just their start date. Summer
   break is one event; this is what makes the school year need no season concept.
