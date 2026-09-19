@@ -1,3 +1,50 @@
+# Scheduler component — snadboy fork
+
+> **This is a fork of [nielsfaber/scheduler-component](https://github.com/nielsfaber/scheduler-component)**,
+> whose backend has seen no release since v3.3.8 (November 2024). It keeps the
+> `scheduler` domain and storage format, so it is a drop-in replacement: existing
+> schedules survive, and [scheduler-card](https://github.com/nielsfaber/scheduler-card)
+> (which *is* actively maintained) works unchanged.
+>
+> ## What this fork changes
+>
+> **1. The workday sensor is configurable.** Upstream hard-codes
+> `binary_sensor.workday_sensor` (`const.WORKDAY_ENTITY`) with no setting and no
+> warning — if that entity is missing or named differently, every `workday` /
+> `weekend` schedule silently falls back to Mon–Fri. See upstream
+> [#382](https://github.com/nielsfaber/scheduler-component/issues/382), closed by
+> the stale bot without a fix. Here it is an option (Settings → Devices & services
+> → Scheduler → Configure), the default is unchanged, a missing sensor is logged
+> as a warning, and changing it re-arms the tracker without a restart.
+>
+> **2. Failed actions are no longer silent.** Upstream calls
+> `async_call_from_config` without blocking and never learns the outcome: a
+> renamed entity or a removed action leaves the schedule looking like it ran
+> (upstream [#534](https://github.com/nielsfaber/scheduler-component/issues/534)).
+> This fork checks the action and its target first, catches anything the call
+> raises, and then:
+> * logs an **error** naming the schedule, action, target and reason,
+> * fires a **`scheduler_action_failed`** event (`schedule_id`, `action`,
+>   `entity_id`, `reason`) to automate on,
+> * raises a **persistent notification** (optional, on by default).
+>
+> Timing is unchanged — actions are still dispatched non-blocking, so a slow
+> script cannot stall the queue.
+>
+> ### A note on `workday` vs `weekend`
+> With a workday sensor present, `weekend` means **"the sensor is off"** — i.e.
+> any non-workday, holidays included, not just Saturday and Sunday. That is
+> upstream behaviour and this fork does not change it (the labels live in the
+> card). If the wording bothers you, use a schedule condition on your workday
+> sensor instead of the day selector.
+>
+> Note that for **future** days Scheduler only evaluates the weekday mask
+> (the sensor's `workdays` attribute, else Mon–Fri) — holidays are not predicted.
+> The live sensor state governs the day itself, so firing is correct even when a
+> predicted "next trigger" is not.
+
+---
+
 # scheduler-component
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/hacs/integration)
 ## Introduction

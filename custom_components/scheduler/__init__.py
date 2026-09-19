@@ -63,6 +63,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     await hass.config_entries.async_forward_entry_setups(entry, [PLATFORM])
 
+    # re-arm the workday tracker when the configured sensor changes
+    entry.async_on_unload(entry.add_update_listener(async_options_updated))
+
     await async_register_websockets(hass)
 
     @callback
@@ -192,6 +195,16 @@ async def async_migrate_entry(hass, config_entry: ConfigEntry):
         config_entry.data = {"migrate_entities": True}
 
     return True
+
+
+async def async_options_updated(hass: HomeAssistant, entry: ConfigEntry):
+    """Handle a change of the Scheduler options.
+
+    Only the workday sensor needs re-wiring; schedules and their timers are
+    left untouched so a settings change never disturbs a running schedule.
+    """
+    coordinator = hass.data[const.DOMAIN]["coordinator"]
+    await coordinator.async_rearm_workday_sensor()
 
 
 async def async_unload_entry(hass, entry):
@@ -425,11 +438,26 @@ class SchedulerCoordinator(DataUpdateCoordinator):
             self.hass, async_workday_timer_finished, ts
         )
 
+    async def async_rearm_workday_sensor(self):
+        """Re-attach the workday tracker to the currently configured entity."""
+        if self._workday_tracker:
+            self._workday_tracker()
+            self._workday_tracker = None
+        await self.async_init_workday_sensor()
+        # let every schedule recalculate against the new sensor
+        async_dispatcher_send(self.hass, const.EVENT_WORKDAY_SENSOR_UPDATED)
+
     async def async_init_workday_sensor(self):
         """watch for changes in the workday sensor"""
 
-        workday_entity = self.hass.states.get(const.WORKDAY_ENTITY)
+        entity_id = const.workday_entity(self.hass)
+        workday_entity = self.hass.states.get(entity_id)
         if not workday_entity:
+            _LOGGER.warning(
+                "Workday sensor '{}' not found - schedules using workday/weekend "
+                "fall back to Mon-Fri. Set the correct entity in the Scheduler "
+                "integration options.".format(entity_id)
+            )
             return None
 
         @callback
@@ -440,7 +468,7 @@ class SchedulerCoordinator(DataUpdateCoordinator):
             async_dispatcher_send(self.hass, const.EVENT_WORKDAY_SENSOR_UPDATED)
 
         self._workday_tracker = async_track_state_change_event(
-            self.hass, const.WORKDAY_ENTITY, async_workday_state_updated
+            self.hass, entity_id, async_workday_state_updated
         )
         await self.async_reset_workday_timer()
 

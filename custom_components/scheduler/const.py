@@ -15,7 +15,7 @@ from homeassistant.const import (
     ATTR_NAME,
 )
 
-VERSION = "3.3.8"
+VERSION = "3.3.8-sb.1"
 
 DOMAIN = "scheduler"
 
@@ -25,7 +25,32 @@ DAY_TYPE_DAILY = "daily"
 DAY_TYPE_WORKDAY = "workday"
 DAY_TYPE_WEEKEND = "weekend"
 
-WORKDAY_ENTITY = "binary_sensor.workday_sensor"
+# The workday sensor is configurable in this fork (upstream hard-codes it).
+# Kept as the default so existing installations behave identically.
+CONF_WORKDAY_ENTITY = "workday_entity"
+DEFAULT_WORKDAY_ENTITY = "binary_sensor.workday_sensor"
+WORKDAY_ENTITY = DEFAULT_WORKDAY_ENTITY  # deprecated, use workday_entity(hass)
+
+# Loud failures (upstream fires actions and never reports errors)
+CONF_NOTIFY_ON_FAILURE = "notify_on_failure"
+DEFAULT_NOTIFY_ON_FAILURE = True
+EVENT_ACTION_FAILED = "scheduler_action_failed"
+
+
+def workday_entity(hass) -> str:
+    """Entity id of the workday sensor for this installation."""
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if entries:
+        return entries[0].options.get(CONF_WORKDAY_ENTITY) or DEFAULT_WORKDAY_ENTITY
+    return DEFAULT_WORKDAY_ENTITY
+
+
+def notify_on_failure(hass) -> bool:
+    """Whether a failed action should raise a persistent notification."""
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if entries:
+        return bool(entries[0].options.get(CONF_NOTIFY_ON_FAILURE, DEFAULT_NOTIFY_ON_FAILURE))
+    return DEFAULT_NOTIFY_ON_FAILURE
 
 ATTR_SKIP_CONDITIONS = "skip_conditions"
 ATTR_CONDITION_TYPE = "condition_type"

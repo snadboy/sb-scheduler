@@ -284,7 +284,7 @@ class TimerHandler:
     def day_in_weekdays(self, ts: datetime.datetime) -> bool:
         """check if the day of a datetime object is in the allowed list of days"""
         day = WEEKDAYS[ts.weekday()]
-        workday_sensor = self.hass.states.get(const.WORKDAY_ENTITY)
+        workday_sensor = self.hass.states.get(const.workday_entity(self.hass))
 
         if (
             workday_sensor

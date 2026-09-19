@@ -1,0 +1,22 @@
+{
+  "config": {
+    "abort": {
+      "single_instance_allowed": "Only a single instance of Scheduler is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Scheduler options",
+        "data": {
+          "workday_entity": "Workday sensor",
+          "notify_on_failure": "Notify when an action fails"
+        },
+        "data_description": {
+          "workday_entity": "The binary sensor used by the workday and weekend day options. Upstream Scheduler hard-codes binary_sensor.workday_sensor; point this at your own sensor if it lives elsewhere. Schedules plan ahead using the sensor's 'workdays' attribute when it has one.",
+          "notify_on_failure": "Raise a persistent notification when a schedule's action cannot run. Failures are always logged and published as a scheduler_action_failed event."
+        }
+      }
+    }
+  }
+}
