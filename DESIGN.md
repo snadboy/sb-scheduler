@@ -206,6 +206,24 @@ window, and the old integration keeps running the real ones meanwhile.
 - **Interval semantics** — start-only repeats; ranges stay in `occurrences`
   (2026-09-19).
 
+## Known wart: the work week is written twice
+
+"Which days are work days" lives in two places — the **Workday integration's**
+own `workdays` mask (which drives `calendar.workday_sensor_us_calendar`, and
+therefore the `workday` / `non_workday` day-sets), and the **`weekend` day-set's**
+mask. Change jobs to a Wed–Sun week and both need editing; miss one and Weekend
+and Non-workday disagree silently. We cannot fix it by fiat because the Workday
+integration owns its mask.
+
+Verified 2026-09-19 that the mask *is* freely editable (Weekend set to Mon/Tue,
+matched Mon+Tue, reverted) — so this is a consistency risk, not a capability gap.
+
+The fix, when it's worth doing: **day-set composition** — let a day-set
+include/exclude *another day-set*. Then `work_week` is defined once as a pure
+mask and `weekend = invert(work_week)`. It would also let School Day exclude
+Non-workday instead of re-listing holidays. Deferred deliberately: building it
+now would solve a problem nobody has yet.
+
 ## Open questions
 
 - Whether day-sets should be shareable across config entries or scoped to one.
