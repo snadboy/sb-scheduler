@@ -2,9 +2,81 @@ query_day_set:
   fields:
     day_set:
       required: true
+      example: school_day
       selector:
         text:
     date:
       selector:
         date:
+
 refresh:
+
+create_schedule:
+  fields:
+    name:
+      required: true
+      example: Bedside lamps wake-up
+      selector:
+        text:
+    day_set:
+      required: true
+      example: workday
+      selector:
+        text:
+    pattern:
+      required: true
+      example: '{"type": "occurrences", "occurrences": ["06:30"]}'
+      selector:
+        object:
+    actions:
+      required: true
+      example: '[{"service": "light.turn_on", "entity_id": "light.bedside_lamps"}]'
+      selector:
+        object:
+    conditions:
+      selector:
+        object:
+    condition_type:
+      selector:
+        text:
+    track_conditions:
+      selector:
+        boolean:
+    enabled:
+      selector:
+        boolean:
+
+edit_schedule:
+  fields:
+    schedule_id:
+      required: true
+      selector:
+        text:
+    name:
+      selector:
+        text:
+    day_set:
+      selector:
+        text:
+    pattern:
+      selector:
+        object:
+    actions:
+      selector:
+        object:
+    enabled:
+      selector:
+        boolean:
+
+remove_schedule:
+  fields:
+    schedule_id:
+      required: true
+      selector:
+        text:
+
+run_now:
+  target:
+    entity:
+      domain: switch
+      integration: sb_scheduler

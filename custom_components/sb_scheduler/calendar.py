@@ -24,7 +24,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up one calendar per day-set."""
-    registry: DaySetRegistry = hass.data[DOMAIN][entry.entry_id]
+    registry: DaySetRegistry = hass.data[DOMAIN][entry.entry_id].day_sets
     async_add_entities(
         DaySetCalendar(entry, registry, day_set)
         for day_set in registry.day_sets.values()
