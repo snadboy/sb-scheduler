@@ -119,6 +119,17 @@ The two fixes from the predecessor fork carry forward and must not regress:
    model this generalises into day-sets and should read a *calendar*, not a
    binary_sensor — see DESIGN.md on why the sensor can only answer "now".
 
+## Last run
+
+`last_triggered` is stored **in the schedule**, not held in memory, so a restart
+does not erase it — "did last night's run actually happen?" is exactly the
+question asked after a restart. `normalise_schedule` carries it through every
+edit, so renaming a schedule cannot wipe its history.
+
+It records the **firing**, not the outcome: actions retry asynchronously when a
+target is unavailable, so "it ran" and "it succeeded" are different questions.
+Failures are reported separately by the action queue's loud-failure path.
+
 ## Phase 2 notes (card)
 
 - **Edit-only by design.** Creating schedules and editing actions are most of the

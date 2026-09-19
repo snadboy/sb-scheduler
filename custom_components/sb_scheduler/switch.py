@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .actions import ActionHandler
 from .const import (
+    ATTR_LAST_TRIGGERED,
     ATTR_NEXT_TRIGGER,
     CONF_ACTIONS,
     CONF_DAY_SET,
@@ -106,6 +107,7 @@ class ScheduleEntity(SwitchEntity):
             CONF_PATTERN: pattern,
             "times": [t.isoformat() for t in occurrence_times(pattern)],
             ATTR_NEXT_TRIGGER: self._next.isoformat() if self._next else None,
+            ATTR_LAST_TRIGGERED: schedule.get(ATTR_LAST_TRIGGERED),
             CONF_ACTIONS: schedule.get(CONF_ACTIONS, []),
         }
 
@@ -189,6 +191,13 @@ class ScheduleEntity(SwitchEntity):
         self._timer_unsub = None
         schedule = self.schedule
         _LOGGER.debug("Schedule '%s' triggered", schedule.get("name"))
+
+        # Record the firing, not the outcome: actions retry asynchronously when
+        # a target is unavailable, so "it ran" and "it succeeded" are different
+        # questions. Failures are reported separately by the action queue.
+        self._data.schedules.async_record_trigger(
+            self.schedule_id, dt_util.now().isoformat()
+        )
 
         if self._handler is not None:
             await self._handler.async_queue_actions(

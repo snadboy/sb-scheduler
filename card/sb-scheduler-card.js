@@ -1,4 +1,4 @@
-/* SB Scheduler Card — v0.1.0 (edit-only)
+/* SB Scheduler Card — v0.2.0 (edit-only)
  *
  * Edits existing sb_scheduler schedules: name, day-set, and time pattern.
  * Creating schedules and editing actions are deliberately out of v1 — they are
@@ -9,9 +9,7 @@
  */
 
 const CARD = "sb-scheduler-card";
-const VERSION = "0.1.0";
-
-const WEEK = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const VERSION = "0.2.0";
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -87,7 +85,7 @@ class SbSchedulerCard extends HTMLElement {
 
   _signature() {
     return this._schedules()
-      .map((s) => `${s.schedule_id}|${s.state}|${s.day_set}|${s.next_trigger}|${JSON.stringify(s.pattern)}|${s.friendly_name}`)
+      .map((s) => `${s.schedule_id}|${s.state}|${s.day_set}|${s.next_trigger}|${s.last_triggered}|${JSON.stringify(s.pattern)}|${s.friendly_name}`)
       .join("~");
   }
 
@@ -195,6 +193,7 @@ class SbSchedulerCard extends HTMLElement {
             <span>${esc(summary)}</span>
           </div>
           <div class="next">${s.state === "off" ? "Disabled" : `Next: ${esc(prettyTrigger(s.next_trigger))}`}</div>
+          <div class="last">Last run: ${esc(s.last_triggered ? prettyTrigger(s.last_triggered) : "never")}</div>
         </div>
         <button class="edit" data-id="${esc(s.schedule_id)}">Edit</button>
       </div>`;
@@ -333,6 +332,7 @@ const STYLE = `
 .chip { background: var(--primary-color); color: var(--text-primary-color);
         border-radius: 10px; padding: 1px 8px; font-size: .85em; }
 .next { color: var(--secondary-text-color); font-size: .85em; margin-top: 2px; }
+.last { color: var(--secondary-text-color); font-size: .8em; opacity: .8; }
 button { cursor: pointer; border-radius: 6px; border: 1px solid var(--divider-color);
          background: var(--card-background-color); color: var(--primary-text-color);
          padding: 6px 12px; font: inherit; }

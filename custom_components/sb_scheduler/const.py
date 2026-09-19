@@ -46,6 +46,8 @@ CONF_STOP = "stop"
 CONF_EVERY_MINUTES = "every_minutes"
 
 ATTR_NEXT_TRIGGER = "next_trigger"
+# Matches the name HA automations use, so it reads the same everywhere.
+ATTR_LAST_TRIGGERED = "last_triggered"
 
 # Interval patterns expand to concrete times at arm-time. A cap keeps a typo
 # such as every_minutes=1 over 24h from producing 1440 firings unnoticed.

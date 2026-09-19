@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    ATTR_LAST_TRIGGERED,
     CONF_ACTIONS,
     CONF_DAY_SET,
     CONF_ENABLED,
@@ -61,6 +62,8 @@ def normalise_schedule(data: dict) -> dict:
         CONF_DAY_SET: data.get(CONF_DAY_SET) or "daily",
         CONF_PATTERN: pattern,
         CONF_ACTIONS: list(data.get(CONF_ACTIONS) or []),
+        # Carried through every edit: an edit must not erase the run history.
+        ATTR_LAST_TRIGGERED: data.get(ATTR_LAST_TRIGGERED),
         "conditions": list(data.get("conditions") or []),
         "condition_type": data.get("condition_type") or "and",
         "track_conditions": bool(data.get("track_conditions", False)),
@@ -105,6 +108,20 @@ class ScheduleStore:
         self.schedules[schedule_id] = merged
         self._save()
         return merged
+
+    @callback
+    def async_record_trigger(self, schedule_id: str, when: str) -> None:
+        """Remember when a schedule last fired.
+
+        Persisted rather than held in memory so a restart does not erase it --
+        "did last night's run happen?" is exactly the question you ask after a
+        restart.
+        """
+        schedule = self.schedules.get(schedule_id)
+        if schedule is None:
+            return
+        schedule[ATTR_LAST_TRIGGERED] = when
+        self._save()
 
     @callback
     def async_delete(self, schedule_id: str) -> bool:
