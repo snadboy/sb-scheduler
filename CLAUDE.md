@@ -17,16 +17,18 @@ attribution chain stays intact. **No upstream merge path is planned.**
 
 ## Where things are
 
-- `custom_components/sb_scheduler/` — the live Phase 0 integration (day-sets).
+- `custom_components/sb_scheduler/` — the live integration: day-sets (Phase 0)
+  plus schedules (Phase 1).
 - `reference/scheduler-component/` — the inherited tree, **deliberately outside
   `custom_components/`** so HACS cannot install a second `scheduler` domain
-  alongside the running one. Phase 1 ports `actions.py`, `store.py`,
-  `websockets.py` and `switch.py` from here.
+  alongside the running one. `actions.py` is already ported from here;
+  `websockets.py` is still unported (only needed if the card ever outgrows
+  reading entity attributes).
 - `card/sb-scheduler-card.js` — the edit-only card. Deployed to `/config/www/`
   and registered as a dashboard resource; NOT yet its own HACS repo.
-- `tests/test_day_set.py`, `tests/test_timer.py` — run with plain `python3`, no HA needed. It stubs the
-  few HA surfaces `day_set.py` touches, so the real evaluation logic is exercised
-  offline. 31 checks.
+- `tests/test_day_set.py` (31 checks) and `tests/test_timer.py` (19) — run with
+  plain `python3`, no HA needed. `day_set.py`'s few HA imports are stubbed;
+  `timer.py` has none at all, so the replaced scheduling core tests natively.
 
 ## Deploying to HA (no HACS yet)
 
