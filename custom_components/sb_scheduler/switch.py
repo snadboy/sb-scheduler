@@ -100,6 +100,10 @@ class ScheduleEntity(SwitchEntity):
             CONF_SCHEDULE_ID: self.schedule_id,
             CONF_DAY_SET: schedule.get(CONF_DAY_SET),
             "pattern_type": pattern.get("type"),
+            # The RAW pattern, so an editor can round-trip an interval's
+            # start/stop/every_minutes. `times` below is the expansion, which
+            # is display-only — editing that would lose the interval.
+            CONF_PATTERN: pattern,
             "times": [t.isoformat() for t in occurrence_times(pattern)],
             ATTR_NEXT_TRIGGER: self._next.isoformat() if self._next else None,
             CONF_ACTIONS: schedule.get(CONF_ACTIONS, []),

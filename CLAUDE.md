@@ -13,7 +13,7 @@ attribution chain stays intact. **No upstream merge path is planned.**
 | Domain | `sb_scheduler` (NOT `scheduler` — see below) |
 | License | GPL-3.0, inherited and permanent |
 | `fork` remote | github.com/snadboy/sb-scheduler-component — the frozen predecessor |
-| Status | **Phase 0 done and verified live.** Next: Phase 1 (schedules). |
+| Status | **Phases 0, 1 and 2 (edit-only card) done and verified live.** |
 
 ## Where things are
 
@@ -22,7 +22,9 @@ attribution chain stays intact. **No upstream merge path is planned.**
   `custom_components/`** so HACS cannot install a second `scheduler` domain
   alongside the running one. Phase 1 ports `actions.py`, `store.py`,
   `websockets.py` and `switch.py` from here.
-- `tests/test_day_set.py` — runs with plain `python3`, no HA needed. It stubs the
+- `card/sb-scheduler-card.js` — the edit-only card. Deployed to `/config/www/`
+  and registered as a dashboard resource; NOT yet its own HACS repo.
+- `tests/test_day_set.py`, `tests/test_timer.py` — run with plain `python3`, no HA needed. It stubs the
   few HA surfaces `day_set.py` touches, so the real evaluation logic is exercised
   offline. 31 checks.
 
@@ -43,6 +45,17 @@ stale `.pyc` files are invalidated by source mtime.
 **Reloading the config entry does NOT re-import changed Python.** A code change
 needs a full restart, or you will verify the old behaviour and believe it. This
 cost a cycle on the slugify fix.
+
+**SSH as `snadboy@homeassistant`; `sudo` works, plain `docker` does not.**
+`/config/custom_components` is writable directly, but `/config/www` is root-owned
+so the card needs `sudo tee`. `docker exec` without sudo fails with a socket
+permission error.
+
+**DANGER: that failure is silent if you discard stderr.** Several "logs are
+clean" checks in this project were `docker exec ... 2>/dev/null | grep`, which
+returned nothing because the command never ran — not because the log was clean.
+Read logs with `sudo docker exec …` and check the byte count, or don't trust the
+result. (`/api/error_log` is 404 on 2026.9.)
 
 ## Phase 0 notes
 
@@ -103,3 +116,20 @@ The two fixes from the predecessor fork carry forward and must not regress:
 2. The workday source is **configurable**, not a hardcoded entity id. In the new
    model this generalises into day-sets and should read a *calendar*, not a
    binary_sensor — see DESIGN.md on why the sensor can only answer "now".
+
+## Phase 2 notes (card)
+
+- **Edit-only by design.** Creating schedules and editing actions are most of the
+  work; `sb_scheduler.create_schedule` already covers creation. This got a usable
+  UI in one pass instead of three.
+- **No websocket API needed.** The card reads schedules from their switch
+  entities' attributes and day-sets from `calendar.*` entities carrying
+  `day_set_id`, then writes via `sb_scheduler.edit_schedule`. Phase 2 therefore
+  needed exactly one backend change: exposing the RAW `pattern` on the switch,
+  because `times` is the expansion and editing that would lose the interval.
+- **Never re-render while the editor is open** — `set hass` returns early when
+  `this._open` is set. Otherwise a state update mid-typing discards the draft.
+  The draft is local state, never read back from hass.
+- Plain `<input>` elements, not `ha-textfield`: it renders invisible outside
+  `ha-form`. Native `<select>` needs explicit `option` colours plus
+  `color-scheme: light dark` or its popup ignores the theme.

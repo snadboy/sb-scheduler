@@ -1,0 +1,405 @@
+/* SB Scheduler Card — v0.1.0 (edit-only)
+ *
+ * Edits existing sb_scheduler schedules: name, day-set, and time pattern.
+ * Creating schedules and editing actions are deliberately out of v1 — they are
+ * most of the work, and `sb_scheduler.create_schedule` already covers creation.
+ *
+ * Needs no websocket API: schedules are read from their switch entities'
+ * attributes and written back through `sb_scheduler.edit_schedule`.
+ */
+
+const CARD = "sb-scheduler-card";
+const VERSION = "0.1.0";
+
+const WEEK = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+const esc = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// "2026-09-21T06:30:00-05:00" -> "Mon 21 Sep, 06:30"
+const prettyTrigger = (iso) => {
+  if (!iso) return "not scheduled";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString(undefined, {
+    weekday: "short", day: "numeric", month: "short",
+    hour: "2-digit", minute: "2-digit",
+  });
+};
+
+class SbSchedulerCard extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement(`${CARD}-editor`);
+  }
+  static getStubConfig() {
+    return { title: "Schedules" };
+  }
+
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._open = null;   // schedule_id being edited
+    this._draft = null;  // local edit state; NEVER overwritten from hass
+    this._sig = null;
+  }
+
+  setConfig(config) {
+    this._config = { title: "Schedules", ...(config || {}) };
+    this._sig = null;
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    // While the editor is open, re-rendering would discard half-typed input.
+    if (this._open) return;
+    const sig = this._signature();
+    if (sig !== this._sig) {
+      this._sig = sig;
+      this._render();
+    }
+  }
+
+  getCardSize() {
+    return 3 + this._schedules().length;
+  }
+
+  // --- data ---------------------------------------------------------------
+  _schedules() {
+    const states = this._hass?.states || {};
+    return Object.keys(states)
+      .filter((id) => id.startsWith("switch.") && states[id].attributes?.schedule_id)
+      .map((id) => ({ entity_id: id, ...states[id].attributes, state: states[id].state }))
+      .sort((a, b) => String(a.friendly_name).localeCompare(String(b.friendly_name)));
+  }
+
+  _daySets() {
+    const states = this._hass?.states || {};
+    return Object.keys(states)
+      .filter((id) => id.startsWith("calendar.") && states[id].attributes?.day_set_id)
+      .map((id) => ({
+        id: states[id].attributes.day_set_id,
+        name: states[id].attributes.friendly_name || states[id].attributes.day_set_id,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  _signature() {
+    return this._schedules()
+      .map((s) => `${s.schedule_id}|${s.state}|${s.day_set}|${s.next_trigger}|${JSON.stringify(s.pattern)}|${s.friendly_name}`)
+      .join("~");
+  }
+
+  // --- editing ------------------------------------------------------------
+  _beginEdit(scheduleId) {
+    const s = this._schedules().find((x) => x.schedule_id === scheduleId);
+    if (!s) return;
+    const pattern = s.pattern || {};
+    this._open = scheduleId;
+    this._draft = {
+      entity_id: s.entity_id,
+      name: s.friendly_name || "",
+      day_set: s.day_set || "daily",
+      type: pattern.type === "interval" ? "interval" : "occurrences",
+      occurrences: (pattern.occurrences || []).map((t) => String(t).slice(0, 5)),
+      start: String(pattern.start || "09:00").slice(0, 5),
+      stop: String(pattern.stop || "17:00").slice(0, 5),
+      every_minutes: Number(pattern.every_minutes || 15),
+      error: null,
+    };
+    if (!this._draft.occurrences.length) this._draft.occurrences = ["06:30"];
+    this._render();
+  }
+
+  _cancel() {
+    this._open = null;
+    this._draft = null;
+    this._sig = null;
+    this._render();
+  }
+
+  _validate(d) {
+    const timeOk = (t) => /^\d{1,2}:\d{2}$/.test(t) &&
+      Number(t.split(":")[0]) < 24 && Number(t.split(":")[1]) < 60;
+    if (!d.name.trim()) return "Name cannot be empty.";
+    if (d.type === "occurrences") {
+      const times = d.occurrences.map((t) => t.trim()).filter(Boolean);
+      if (!times.length) return "Add at least one time.";
+      const bad = times.filter((t) => !timeOk(t));
+      if (bad.length) return `Not a valid time: ${bad.join(", ")}`;
+    } else {
+      if (!timeOk(d.start) || !timeOk(d.stop)) return "Start and stop must be times.";
+      if (d.stop <= d.start) return "Stop must be after start.";
+      if (!(d.every_minutes >= 1)) return "Repeat every … must be at least 1 minute.";
+    }
+    return null;
+  }
+
+  async _save() {
+    const d = this._draft;
+    const error = this._validate(d);
+    if (error) {
+      d.error = error;
+      this._render();
+      return;
+    }
+    const pattern = d.type === "interval"
+      ? { type: "interval", start: d.start, stop: d.stop, every_minutes: Number(d.every_minutes) }
+      : { type: "occurrences", occurrences: d.occurrences.map((t) => t.trim()).filter(Boolean) };
+
+    try {
+      await this._hass.callService("sb_scheduler", "edit_schedule", {
+        schedule_id: this._open,
+        name: d.name.trim(),
+        day_set: d.day_set,
+        pattern,
+      });
+      this._cancel();
+    } catch (err) {
+      d.error = `Save failed: ${err?.message || err}`;
+      this._render();
+    }
+  }
+
+  // --- rendering ----------------------------------------------------------
+  _render() {
+    if (!this.shadowRoot) return;
+    if (!this._hass) {
+      this.shadowRoot.innerHTML = "";
+      return;
+    }
+    this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card>${
+      this._config.title ? `<h1 class="card-header">${esc(this._config.title)}</h1>` : ""
+    }<div class="body">${this._open ? this._editorHtml() : this._listHtml()}</div></ha-card>`;
+    this._wire();
+  }
+
+  _listHtml() {
+    const rows = this._schedules();
+    if (!rows.length) {
+      return `<div class="empty">No schedules yet.<br>
+        Create one with the <code>sb_scheduler.create_schedule</code> action —
+        this card edits existing schedules.</div>`;
+    }
+    return rows.map((s) => {
+      const pattern = s.pattern || {};
+      const summary = pattern.type === "interval"
+        ? `every ${pattern.every_minutes} min, ${String(pattern.start).slice(0, 5)}–${String(pattern.stop).slice(0, 5)}`
+        : (s.times || []).map((t) => String(t).slice(0, 5)).join(", ");
+      return `<div class="row ${s.state === "off" ? "disabled" : ""}">
+        <div class="info">
+          <div class="name">${esc(s.friendly_name)}</div>
+          <div class="meta">
+            <span class="chip">${esc(s.day_set)}</span>
+            <span>${esc(summary)}</span>
+          </div>
+          <div class="next">${s.state === "off" ? "Disabled" : `Next: ${esc(prettyTrigger(s.next_trigger))}`}</div>
+        </div>
+        <button class="edit" data-id="${esc(s.schedule_id)}">Edit</button>
+      </div>`;
+    }).join("");
+  }
+
+  _editorHtml() {
+    const d = this._draft;
+    const daySets = this._daySets();
+    const known = daySets.some((x) => x.id === d.day_set);
+    return `
+      ${d.error ? `<div class="error">${esc(d.error)}</div>` : ""}
+      <label class="field"><span>Name</span>
+        <input id="name" type="text" value="${esc(d.name)}"></label>
+
+      <label class="field"><span>Runs on</span>
+        <select id="day_set">
+          ${daySets.map((x) => `<option value="${esc(x.id)}" ${x.id === d.day_set ? "selected" : ""}>${esc(x.name)}</option>`).join("")}
+          ${known ? "" : `<option value="${esc(d.day_set)}" selected>${esc(d.day_set)} (missing)</option>`}
+        </select></label>
+      ${known ? "" : `<div class="warn">This schedule points at a day-set that no longer exists, so it cannot run.</div>`}
+
+      <div class="field"><span>Times</span>
+        <div class="radios">
+          <label><input type="radio" name="ptype" value="occurrences" ${d.type === "occurrences" ? "checked" : ""}> At set times</label>
+          <label><input type="radio" name="ptype" value="interval" ${d.type === "interval" ? "checked" : ""}> Every N minutes</label>
+        </div>
+      </div>
+
+      ${d.type === "occurrences" ? `
+        <div class="times">
+          ${d.occurrences.map((t, i) => `
+            <div class="timerow">
+              <input class="occ" data-i="${i}" type="time" value="${esc(t)}">
+              ${d.occurrences.length > 1 ? `<button class="drop" data-i="${i}" title="Remove">✕</button>` : ""}
+            </div>`).join("")}
+          <button class="add">+ Add a time</button>
+        </div>` : `
+        <div class="interval">
+          <label class="field inline"><span>From</span><input id="start" type="time" value="${esc(d.start)}"></label>
+          <label class="field inline"><span>Until</span><input id="stop" type="time" value="${esc(d.stop)}"></label>
+          <label class="field inline"><span>Every (min)</span><input id="every" type="number" min="1" max="720" value="${esc(d.every_minutes)}"></label>
+          <div class="count">${this._intervalCount(d)}</div>
+        </div>`}
+
+      <div class="actions-note">Actions are not editable here in v1 — use
+        <code>sb_scheduler.edit_schedule</code>.</div>
+
+      <div class="buttons">
+        <button class="cancel">Cancel</button>
+        <button class="save">Save</button>
+      </div>`;
+  }
+
+  _intervalCount(d) {
+    const toMin = (t) => {
+      const [h, m] = String(t).split(":").map(Number);
+      return h * 60 + m;
+    };
+    const span = toMin(d.stop) - toMin(d.start);
+    const step = Number(d.every_minutes);
+    if (!(span >= 0) || !(step >= 1)) return "";
+    const n = Math.floor(span / step) + 1;
+    return `${n} firing${n === 1 ? "" : "s"} per day`;
+  }
+
+  _wire() {
+    const root = this.shadowRoot;
+    root.querySelectorAll("button.edit").forEach((b) =>
+      b.addEventListener("click", () => this._beginEdit(b.dataset.id)));
+
+    if (!this._open) return;
+    const d = this._draft;
+
+    const bind = (sel, key, transform = (v) => v) => {
+      const el = root.querySelector(sel);
+      if (el) el.addEventListener("input", () => { d[key] = transform(el.value); });
+    };
+    bind("#name", "name");
+    bind("#start", "start");
+    bind("#stop", "stop");
+    bind("#every", "every_minutes", Number);
+
+    const daySet = root.querySelector("#day_set");
+    if (daySet) daySet.addEventListener("change", () => { d.day_set = daySet.value; });
+
+    root.querySelectorAll('input[name="ptype"]').forEach((r) =>
+      r.addEventListener("change", () => {
+        if (!r.checked) return;
+        d.type = r.value;
+        d.error = null;
+        this._render();
+      }));
+
+    root.querySelectorAll("input.occ").forEach((inp) =>
+      inp.addEventListener("input", () => { d.occurrences[Number(inp.dataset.i)] = inp.value; }));
+
+    root.querySelectorAll("button.drop").forEach((b) =>
+      b.addEventListener("click", () => {
+        d.occurrences.splice(Number(b.dataset.i), 1);
+        this._render();
+      }));
+
+    const add = root.querySelector("button.add");
+    if (add) add.addEventListener("click", () => { d.occurrences.push("12:00"); this._render(); });
+
+    // Live firing count while the interval is being edited.
+    ["#start", "#stop", "#every"].forEach((sel) => {
+      const el = root.querySelector(sel);
+      if (el) el.addEventListener("input", () => {
+        const out = root.querySelector(".count");
+        if (out) out.textContent = this._intervalCount(d);
+      });
+    });
+
+    root.querySelector("button.cancel")?.addEventListener("click", () => this._cancel());
+    root.querySelector("button.save")?.addEventListener("click", () => this._save());
+  }
+}
+
+const STYLE = `
+:host { display: block; }
+/* Native select popups ignore the page theme unless told otherwise. */
+:host { color-scheme: light dark; }
+.card-header { font-size: 1.25rem; padding: 12px 16px 0; margin: 0; }
+.body { padding: 8px 16px 16px; }
+.empty { color: var(--secondary-text-color); padding: 12px 0; line-height: 1.5; }
+.row { display: flex; align-items: center; gap: 12px; padding: 10px 0;
+       border-bottom: 1px solid var(--divider-color); }
+.row:last-of-type { border-bottom: none; }
+.row.disabled .name, .row.disabled .meta { opacity: .55; }
+.info { flex: 1; min-width: 0; }
+.name { font-weight: 500; }
+.meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+        color: var(--secondary-text-color); font-size: .9em; margin-top: 2px; }
+.chip { background: var(--primary-color); color: var(--text-primary-color);
+        border-radius: 10px; padding: 1px 8px; font-size: .85em; }
+.next { color: var(--secondary-text-color); font-size: .85em; margin-top: 2px; }
+button { cursor: pointer; border-radius: 6px; border: 1px solid var(--divider-color);
+         background: var(--card-background-color); color: var(--primary-text-color);
+         padding: 6px 12px; font: inherit; }
+button.save { background: var(--primary-color); color: var(--text-primary-color);
+              border-color: transparent; }
+button.drop { border: none; background: none; color: var(--error-color); padding: 4px 8px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin: 12px 0; }
+.field > span { color: var(--secondary-text-color); font-size: .85em; }
+.field.inline { flex: 1; }
+input, select { font: inherit; padding: 8px; border-radius: 6px;
+                border: 1px solid var(--divider-color);
+                background: var(--card-background-color); color: var(--primary-text-color); }
+option { background: var(--card-background-color); color: var(--primary-text-color); }
+.radios { display: flex; gap: 16px; flex-wrap: wrap; }
+.radios label { display: flex; align-items: center; gap: 6px; }
+.times { display: flex; flex-direction: column; gap: 6px; }
+.timerow { display: flex; align-items: center; gap: 6px; }
+.interval { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.count { color: var(--secondary-text-color); font-size: .85em; padding-bottom: 10px; }
+.buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.error { background: var(--error-color); color: var(--text-primary-color);
+         padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; }
+.warn { color: var(--warning-color); font-size: .85em; margin: -6px 0 8px; }
+.actions-note { color: var(--secondary-text-color); font-size: .8em; margin-top: 16px; }
+code { background: var(--secondary-background-color); padding: 1px 4px; border-radius: 3px; }
+`;
+
+// --- config editor ---------------------------------------------------------
+class SbSchedulerCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = config || {};
+    this._render();
+  }
+  set hass(hass) {
+    this._hass = hass;
+  }
+  _render() {
+    if (this._built) return;
+    this._built = true;
+    this.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:4px;padding:8px 0">
+        <span style="font-size:.85em;color:var(--secondary-text-color)">Title</span>
+        <input id="t" type="text" style="font:inherit;padding:8px;border-radius:6px;
+          border:1px solid var(--divider-color);background:var(--card-background-color);
+          color:var(--primary-text-color)" value="${esc(this._config.title || "")}">
+      </div>`;
+    this.querySelector("#t").addEventListener("input", (e) => {
+      this._config = { ...this._config, title: e.target.value };
+      this.dispatchEvent(new CustomEvent("config-changed", {
+        detail: { config: this._config }, bubbles: true, composed: true,
+      }));
+    });
+  }
+}
+
+customElements.define(CARD, SbSchedulerCard);
+customElements.define(`${CARD}-editor`, SbSchedulerCardEditor);
+
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: CARD,
+  name: "SB Scheduler Card",
+  description: "Edit sb_scheduler schedules: day-set and time pattern.",
+  preview: false,
+  documentationURL: "https://github.com/snadboy/sb-scheduler",
+});
+
+console.info(`%c ${CARD.toUpperCase()} %c v${VERSION} `,
+  "color:white;background:#3f51b5;font-weight:700",
+  "color:#3f51b5;background:white;font-weight:700");
