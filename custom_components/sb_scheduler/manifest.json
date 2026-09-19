@@ -1,0 +1,13 @@
+{
+  "domain": "sb_scheduler",
+  "name": "SB Scheduler",
+  "codeowners": ["@snadboy"],
+  "config_flow": true,
+  "dependencies": ["calendar"],
+  "documentation": "https://github.com/snadboy/sb-scheduler",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/snadboy/sb-scheduler/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

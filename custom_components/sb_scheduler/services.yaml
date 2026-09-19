@@ -1,0 +1,10 @@
+query_day_set:
+  fields:
+    day_set:
+      required: true
+      selector:
+        text:
+    date:
+      selector:
+        date:
+refresh:

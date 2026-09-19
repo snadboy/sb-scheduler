@@ -1,0 +1,103 @@
+{
+  "title": "SB Scheduler",
+  "config": {
+    "step": {
+      "user": {
+        "title": "SB Scheduler",
+        "description": "Day-sets are named groups of dates — Workday, School Day, Trash Day — that schedules can run against. Pick a workday calendar now and Workday and Non-workday are created for you; you can add more day-sets afterwards under Configure.\n\nThe Workday integration publishes one (typically calendar.workday_sensor_us_calendar). Leave it empty to start with just Daily and Weekend.",
+        "data": {
+          "workday_calendar": "Workday calendar (optional)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "SB Scheduler is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Day-sets",
+        "menu_options": {
+          "add": "Add a day-set",
+          "pick_edit": "Edit a day-set",
+          "pick_remove": "Remove a day-set"
+        }
+      },
+      "add": {
+        "title": "Add a day-set",
+        "description": "A day-set is a named group of dates. Start from the weekdays it can fall on, then narrow or widen it with calendars and dates.\n\nDates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+        "data": {
+          "name": "Name",
+          "weekdays": "Weekdays it can fall on",
+          "exclude_calendars": "Excluded by these calendars",
+          "exclude_dates": "Excluded dates",
+          "include_calendars": "Included by these calendars",
+          "include_dates": "Included dates",
+          "invert": "Invert (every date NOT in this set)"
+        },
+        "data_description": {
+          "weekdays": "Leave empty if the day-set comes entirely from an 'included' calendar, such as Trash Day.",
+          "exclude_dates": "School breaks, institute days. One range covers a whole summer.",
+          "include_dates": "Dates that count even when excluded — these win over everything else.",
+          "invert": "Turns Workday into Non-workday without configuring it twice."
+        }
+      },
+      "edit": {
+        "title": "Edit {name}",
+        "description": "Dates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+        "data": {
+          "name": "Name",
+          "weekdays": "Weekdays it can fall on",
+          "exclude_calendars": "Excluded by these calendars",
+          "exclude_dates": "Excluded dates",
+          "include_calendars": "Included by these calendars",
+          "include_dates": "Included dates",
+          "invert": "Invert (every date NOT in this set)"
+        }
+      },
+      "pick_edit": {
+        "title": "Edit a day-set",
+        "data": { "id": "Day-set" }
+      },
+      "pick_remove": {
+        "title": "Remove a day-set",
+        "description": "Its calendar entity is removed too. Schedules using it will stop matching.",
+        "data": { "id": "Day-set" }
+      }
+    },
+    "error": {
+      "invalid_dates": "Could not read those dates. Use YYYY-MM-DD, separated by commas, with ranges written as YYYY-MM-DD..YYYY-MM-DD."
+    },
+    "abort": {
+      "unknown_day_set": "That day-set no longer exists."
+    }
+  },
+  "selector": {
+    "weekdays": {
+      "options": {
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
+      }
+    }
+  },
+  "services": {
+    "query_day_set": {
+      "name": "Query day-set",
+      "description": "Ask whether a date is in a day-set, and when the next matching date is.",
+      "fields": {
+        "day_set": { "name": "Day-set", "description": "The day-set id, shown on its calendar entity." },
+        "date": { "name": "Date", "description": "Defaults to today." }
+      }
+    },
+    "refresh": {
+      "name": "Refresh",
+      "description": "Recompute every day-set now, instead of waiting for the nightly refresh."
+    }
+  }
+}
