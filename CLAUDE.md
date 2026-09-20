@@ -212,12 +212,16 @@ Failures are reported separately by the action queue's loud-failure path.
   `last_triggered` re-renders the row faster than the eye.
 - `.row` uses `flex-wrap` and `.info` has `flex: 1 1 180px`, so the three
   controls drop to a second line on a phone rather than crushing the text.
-- **An occurrence row's input kind must not depend on the text being valid.**
-  v0.5.1 chose `type=time` vs `type=text` from `isSun(value)`, so a typo like
-  `sccunrise-00:15` fell back to a time picker, which refuses to display it —
-  the row went blank, the value was unreachable, and `sunset+` could not be
-  typed. v0.6.0 keeps a sticky per-row `kind` in the draft plus a ☀/⏱ button to
-  switch, so anything invalid stays in a text box and stays correctable.
+- **Occurrences are edited as STRUCTURE, never as text** (v0.7.0). A row is a
+  Time↔Sun slider plus either a time picker, or {event dropdown, +/− dropdown,
+  minutes spinner}. `parseOccurrence` / `serialiseOccurrence` convert to and
+  from the stored string. A misspelling like `sccunrise-00:15` is simply not
+  expressible, which removed a whole bug class:
+  v0.5.1 picked `type=time` vs `type=text` from `isSun(value)`, so a typo fell
+  back to a time picker that refuses to display it — the row went blank, the
+  value was unreachable, and `sunset+` could not be typed at all.
+  An offset of 0 serialises to a bare `sunset`, and unparseable stored data
+  recovers to a `06:30` clock row rather than being uneditable.
 - Plain `<input>` elements, not `ha-textfield`: it renders invisible outside
   `ha-form`. Native `<select>` needs explicit `option` colours plus
   `color-scheme: light dark` or its popup ignores the theme.

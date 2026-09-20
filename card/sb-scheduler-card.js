@@ -1,4 +1,4 @@
-/* SB Scheduler Card — v0.6.0 (edit-only)
+/* SB Scheduler Card — v0.7.0 (edit-only)
  *
  * Edits existing sb_scheduler schedules: name, day-set, and time pattern.
  * Creating schedules and editing actions are deliberately out of v1 — they are
@@ -9,12 +9,45 @@
  */
 
 const CARD = "sb-scheduler-card";
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 
 // "sunset", "sunset+00:15:00", "sunrise-01:30" — must survive a round-trip
 // through the editor, which is why these get a text field and not <input type=time>.
 const SUN = /^(sunrise|sunset)(\s*[+-]\s*\d{1,2}:\d{2}(:\d{2})?)?$/i;
 const isSun = (v) => SUN.test(String(v ?? "").trim());
+
+// An occurrence is EDITED as structure, never as text: a typo like
+// "sccunrise-00:15" cannot be expressed by a toggle, two dropdowns and a
+// spinner. Parsed on open, serialised on save.
+const parseOccurrence = (raw) => {
+  const s = String(raw ?? "").trim();
+  const m = SUN.exec(s);
+  if (m) {
+    let sign = "+", minutes = 0;
+    if (m[2]) {
+      const off = m[2].replace(/\s/g, "");
+      sign = off[0] === "-" ? "-" : "+";
+      const [h, mi] = off.slice(1).split(":").map(Number);
+      minutes = (h || 0) * 60 + (mi || 0);
+    }
+    return { kind: "sun", event: m[1].toLowerCase(), sign, minutes, time: "06:30" };
+  }
+  const clock = /^(\d{1,2}):(\d{2})/.exec(s);
+  return {
+    kind: "clock",
+    time: clock ? `${String(clock[1]).padStart(2, "0")}:${clock[2]}` : "06:30",
+    event: "sunset", sign: "+", minutes: 0,
+  };
+};
+
+const serialiseOccurrence = (o) => {
+  if (o.kind !== "sun") return o.time;
+  const n = Math.max(0, Math.round(Number(o.minutes) || 0));
+  if (!n) return o.event;               // "sunset" — a bare event means no offset
+  const h = String(Math.floor(n / 60)).padStart(2, "0");
+  const m = String(n % 60).padStart(2, "0");
+  return `${o.event}${o.sign}${h}:${m}:00`;
+};
 const isClock = (v) => {
   const s = String(v ?? "").trim();
   if (!/^\d{1,2}:\d{2}$/.test(s)) return false;
@@ -125,22 +158,14 @@ class SbSchedulerCard extends HTMLElement {
       name: s.friendly_name || "",
       day_set: s.day_set || "daily",
       type: pattern.type === "interval" ? "interval" : "occurrences",
-      occurrences: (pattern.occurrences || []).map((t) =>
-        isSun(t) ? String(t).trim() : String(t).slice(0, 5)),
-      // "clock" renders a time picker, "text" a free field. Derived from the
-      // value, but sticky afterwards: a row must not flip back to a time
-      // picker just because its text is momentarily invalid, or the text
-      // becomes unreachable and uncorrectable.
-      kinds: (pattern.occurrences || []).map((t) =>
-        isClock(String(t).slice(0, 5)) ? "clock" : "text"),
+      occurrences: (pattern.occurrences || []).map(parseOccurrence),
       start: String(pattern.start || "09:00").slice(0, 5),
       stop: String(pattern.stop || "17:00").slice(0, 5),
       every_minutes: Number(pattern.every_minutes || 15),
       error: null,
     };
     if (!this._draft.occurrences.length) {
-      this._draft.occurrences = ["06:30"];
-      this._draft.kinds = ["clock"];
+      this._draft.occurrences = [parseOccurrence("06:30")];
     }
     this._render();
   }
@@ -157,13 +182,11 @@ class SbSchedulerCard extends HTMLElement {
       Number(t.split(":")[0]) < 24 && Number(t.split(":")[1]) < 60;
     if (!d.name.trim()) return "Name cannot be empty.";
     if (d.type === "occurrences") {
-      const times = d.occurrences.map((t) => t.trim()).filter(Boolean);
-      if (!times.length) return "Add at least one time.";
-      const bad = times.filter((t) => !timeOk(t) && !isSun(t));
-      if (bad.length) {
-        return `Not a valid time: ${bad.join(", ")}. Use HH:MM, or sunrise/sunset ` +
-               `with an optional offset such as sunset+00:15.`;
-      }
+      if (!d.occurrences.length) return "Add at least one time.";
+      // Every value is assembled from a toggle, dropdowns and a spinner, so
+      // it cannot be misspelled. Only a clock row can still be blank.
+      const blank = d.occurrences.filter((o) => o.kind === "clock" && !timeOk(o.time));
+      if (blank.length) return "Every clock time needs a value.";
     } else {
       if (!timeOk(d.start) || !timeOk(d.stop)) return "Start and stop must be times.";
       if (d.stop <= d.start) return "Stop must be after start.";
@@ -182,7 +205,7 @@ class SbSchedulerCard extends HTMLElement {
     }
     const pattern = d.type === "interval"
       ? { type: "interval", start: d.start, stop: d.stop, every_minutes: Number(d.every_minutes) }
-      : { type: "occurrences", occurrences: d.occurrences.map((t) => t.trim()).filter(Boolean) };
+      : { type: "occurrences", occurrences: d.occurrences.map(serialiseOccurrence) };
 
     try {
       await this._hass.callService("sb_scheduler", "edit_schedule", {
@@ -275,19 +298,32 @@ class SbSchedulerCard extends HTMLElement {
 
       ${d.type === "occurrences" ? `
         <div class="times">
-          ${d.occurrences.map((t, i) => `
+          ${d.occurrences.map((o, i) => `
             <div class="timerow">
-              <input class="occ" data-i="${i}" type="${(d.kinds[i] || "clock") === "clock" ? "time" : "text"}"
-                     value="${esc(t)}"
-                     placeholder="${(d.kinds[i] || "clock") === "clock" ? "" : "sunset+00:15"}">
-              <button class="kind" data-i="${i}"
-                      title="${(d.kinds[i] || "clock") === "clock" ? "Switch to a sun-relative time" : "Switch to a clock time"}"
-                      >${(d.kinds[i] || "clock") === "clock" ? "\u2600" : "\u23F1"}</button>
+              <span class="modelbl ${o.kind === "clock" ? "on" : ""}">Time</span>
+              <label class="toggle" title="Switch between a clock time and a sun-relative one">
+                <input type="checkbox" class="mode" data-i="${i}" ${o.kind === "sun" ? "checked" : ""}>
+                <span></span>
+              </label>
+              <span class="modelbl ${o.kind === "sun" ? "on" : ""}">Sun</span>
+              ${o.kind === "clock" ? `
+                <input class="occ-time" data-i="${i}" type="time" value="${esc(o.time)}">
+              ` : `
+                <select class="occ-event" data-i="${i}">
+                  <option value="sunrise" ${o.event === "sunrise" ? "selected" : ""}>Sunrise</option>
+                  <option value="sunset" ${o.event === "sunset" ? "selected" : ""}>Sunset</option>
+                </select>
+                <select class="occ-sign" data-i="${i}">
+                  <option value="+" ${o.sign === "+" ? "selected" : ""}>+</option>
+                  <option value="-" ${o.sign === "-" ? "selected" : ""}>\u2212</option>
+                </select>
+                <input class="occ-mins" data-i="${i}" type="number" min="0" max="720" step="5"
+                       value="${esc(o.minutes)}">
+                <span class="unit">min</span>
+              `}
               ${d.occurrences.length > 1 ? `<button class="drop" data-i="${i}" title="Remove">✕</button>` : ""}
             </div>`).join("")}
           <button class="add">+ Add a time</button>
-          <div class="hint">Times are HH:MM, or sunrise/sunset with an offset —
-            e.g. <code>sunset+00:15</code>.</div>
         </div>` : `
         <div class="interval">
           <label class="field inline"><span>From</span><input id="start" type="time" value="${esc(d.start)}"></label>
@@ -376,33 +412,38 @@ class SbSchedulerCard extends HTMLElement {
         this._render();
       }));
 
-    root.querySelectorAll("input.occ").forEach((inp) =>
-      inp.addEventListener("input", () => { d.occurrences[Number(inp.dataset.i)] = inp.value; }));
+    const onRow = (sel, apply, evt = "input") =>
+      root.querySelectorAll(sel).forEach((el) =>
+        el.addEventListener(evt, () => {
+          apply(d.occurrences[Number(el.dataset.i)], el);
+          d.error = null;
+        }));
 
-    root.querySelectorAll("button.drop").forEach((b) =>
-      b.addEventListener("click", () => {
-        const i = Number(b.dataset.i);
-        d.occurrences.splice(i, 1);
-        d.kinds.splice(i, 1);
+    onRow("input.occ-time", (o, el) => { o.time = el.value; });
+    onRow("select.occ-event", (o, el) => { o.event = el.value; }, "change");
+    onRow("select.occ-sign", (o, el) => { o.sign = el.value; }, "change");
+    onRow("input.occ-mins", (o, el) => {
+      const n = Math.max(0, Math.min(720, Math.round(Number(el.value) || 0)));
+      o.minutes = n;
+    });
+
+    root.querySelectorAll("input.mode").forEach((box) =>
+      box.addEventListener("change", () => {
+        const o = d.occurrences[Number(box.dataset.i)];
+        o.kind = box.checked ? "sun" : "clock";
+        d.error = null;
         this._render();
       }));
 
-    root.querySelectorAll("button.kind").forEach((b) =>
+    root.querySelectorAll("button.drop").forEach((b) =>
       b.addEventListener("click", () => {
-        const i = Number(b.dataset.i);
-        const toText = (d.kinds[i] || "clock") === "clock";
-        d.kinds[i] = toText ? "text" : "clock";
-        // Going to text keeps the value so it can be extended into a sun
-        // string; going back to a picker drops anything it cannot display.
-        if (!toText && !isClock(d.occurrences[i])) d.occurrences[i] = "12:00";
-        d.error = null;
+        d.occurrences.splice(Number(b.dataset.i), 1);
         this._render();
       }));
 
     const add = root.querySelector("button.add");
     if (add) add.addEventListener("click", () => {
-      d.occurrences.push("12:00");
-      d.kinds.push("clock");
+      d.occurrences.push(parseOccurrence("12:00"));
       this._render();
     });
 
@@ -473,7 +514,12 @@ option { background: var(--card-background-color); color: var(--primary-text-col
 .interval { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .count { color: var(--secondary-text-color); font-size: .85em; padding-bottom: 10px; }
 .hint { color: var(--secondary-text-color); font-size: .8em; margin-top: 4px; }
-button.kind { padding: 6px 9px; line-height: 1; font-size: 1em; }
+.timerow { flex-wrap: wrap; }
+.modelbl { font-size: .8em; color: var(--secondary-text-color); }
+.modelbl.on { color: var(--primary-text-color); font-weight: 500; }
+.timerow select { padding: 7px 6px; }
+.occ-mins { width: 76px; }
+.unit { font-size: .8em; color: var(--secondary-text-color); }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .error { background: var(--error-color); color: var(--text-primary-color);
          padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; }
