@@ -283,6 +283,21 @@ mask and `weekend = invert(work_week)`. It would also let School Day exclude
 Non-workday instead of re-listing holidays. Deferred deliberately: building it
 now would solve a problem nobody has yet.
 
+## Naming: day-set calendars can collide with their sources
+
+A day-set named after the calendar it is built from collides: "Trash Day"
+backed by `calendar.trash_day` was assigned `calendar.trash_day_2` (renamed by
+hand to `calendar.sb_trash_day`). The `sb_` prefix this design originally
+proposed and then dropped would have avoided it. Five existing day-set
+calendars are bare; if the collision recurs, prefix them all.
+
+## Not expressible yet: an offset from a day-set
+
+"The night before trash day" cannot be written. A day-set is a set of dates
+with no notion of ±N days, and the schedule's time pattern is a time of day,
+not a date shift. Bin-out reminders are the obvious use. Options: an offset on
+the day-set, or an offset on the schedule's day-set reference.
+
 ## Open questions
 
 - Whether day-sets should be shareable across config entries or scoped to one.
