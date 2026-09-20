@@ -252,7 +252,18 @@ question.
 
 Live wiring: `workday` = base `calendar.workday_sensor_us_calendar`, veto
 `calendar.days_off`, force `calendar.days_off` matching "Workday".
-Verified 2026-11-27 and 2026-12-24 now report **False**.
+
+Verified live 2026-09-20, all three tiers:
+
+| | |
+|---|---|
+| veto | 2026-11-27 and 2026-12-24 (days-off entries) report **False** |
+| force | a "Workday"-titled entry added to `days_off` on Sat 2027-01-09 flipped `workday` to **True** — and that same entry is in the veto source, so it was vetoed and force-overridden at once |
+| base | Thanksgiving still False, Veterans Day (in `remove_holidays`) still True |
+
+The test entry was deleted afterwards; `calendar.days_off` is back to its
+original two entries. There is no `calendar.delete_event` service — deletion is
+the websocket command `calendar/event/delete` with `entity_id` and `uid`.
 
 ## Known wart: the work week is written twice
 

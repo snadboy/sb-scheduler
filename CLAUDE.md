@@ -131,6 +131,12 @@ error in the log. The schedules kept firing, because they use the registry
 objects rather than the calendar entities — so the breakage was invisible from
 the thing that matters. Grep every module for a field before renaming it.
 
+**Editing a local calendar from a script:** `calendar.create_event` is a
+service, but there is **no `calendar.delete_event`** — deletion is the
+websocket command `calendar/event/delete` with `entity_id` + `uid`. Probe it
+with a bogus uid before creating anything, so you know you can clean up.
+(`UID` is a readonly bash variable; name the shell var something else.)
+
 `snadboy/ha-workdays-card` — the editor for `calendar.days_off` — is installed
 and live behind a Bubble pop-up (`#workdays`) on the Home view. Do not remove
 it.
