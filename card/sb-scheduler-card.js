@@ -1,4 +1,4 @@
-/* SB Scheduler Card — v0.5.1 (edit-only)
+/* SB Scheduler Card — v0.6.0 (edit-only)
  *
  * Edits existing sb_scheduler schedules: name, day-set, and time pattern.
  * Creating schedules and editing actions are deliberately out of v1 — they are
@@ -9,12 +9,18 @@
  */
 
 const CARD = "sb-scheduler-card";
-const VERSION = "0.5.1";
+const VERSION = "0.6.0";
 
 // "sunset", "sunset+00:15:00", "sunrise-01:30" — must survive a round-trip
 // through the editor, which is why these get a text field and not <input type=time>.
 const SUN = /^(sunrise|sunset)(\s*[+-]\s*\d{1,2}:\d{2}(:\d{2})?)?$/i;
 const isSun = (v) => SUN.test(String(v ?? "").trim());
+const isClock = (v) => {
+  const s = String(v ?? "").trim();
+  if (!/^\d{1,2}:\d{2}$/.test(s)) return false;
+  const [h, m] = s.split(":").map(Number);
+  return h < 24 && m < 60;
+};
 
 // "06:50" -> "6:50"; a schedule time is read, not sorted, so drop the pad.
 const hhmm = (t) => String(t ?? "").replace(/^0/, "");
@@ -121,12 +127,21 @@ class SbSchedulerCard extends HTMLElement {
       type: pattern.type === "interval" ? "interval" : "occurrences",
       occurrences: (pattern.occurrences || []).map((t) =>
         isSun(t) ? String(t).trim() : String(t).slice(0, 5)),
+      // "clock" renders a time picker, "text" a free field. Derived from the
+      // value, but sticky afterwards: a row must not flip back to a time
+      // picker just because its text is momentarily invalid, or the text
+      // becomes unreachable and uncorrectable.
+      kinds: (pattern.occurrences || []).map((t) =>
+        isClock(String(t).slice(0, 5)) ? "clock" : "text"),
       start: String(pattern.start || "09:00").slice(0, 5),
       stop: String(pattern.stop || "17:00").slice(0, 5),
       every_minutes: Number(pattern.every_minutes || 15),
       error: null,
     };
-    if (!this._draft.occurrences.length) this._draft.occurrences = ["06:30"];
+    if (!this._draft.occurrences.length) {
+      this._draft.occurrences = ["06:30"];
+      this._draft.kinds = ["clock"];
+    }
     this._render();
   }
 
@@ -262,8 +277,12 @@ class SbSchedulerCard extends HTMLElement {
         <div class="times">
           ${d.occurrences.map((t, i) => `
             <div class="timerow">
-              <input class="occ" data-i="${i}" type="${isSun(t) ? "text" : "time"}"
-                     value="${esc(t)}" ${isSun(t) ? 'title="Relative to the sun"' : ""}>
+              <input class="occ" data-i="${i}" type="${(d.kinds[i] || "clock") === "clock" ? "time" : "text"}"
+                     value="${esc(t)}"
+                     placeholder="${(d.kinds[i] || "clock") === "clock" ? "" : "sunset+00:15"}">
+              <button class="kind" data-i="${i}"
+                      title="${(d.kinds[i] || "clock") === "clock" ? "Switch to a sun-relative time" : "Switch to a clock time"}"
+                      >${(d.kinds[i] || "clock") === "clock" ? "\u2600" : "\u23F1"}</button>
               ${d.occurrences.length > 1 ? `<button class="drop" data-i="${i}" title="Remove">✕</button>` : ""}
             </div>`).join("")}
           <button class="add">+ Add a time</button>
@@ -362,12 +381,30 @@ class SbSchedulerCard extends HTMLElement {
 
     root.querySelectorAll("button.drop").forEach((b) =>
       b.addEventListener("click", () => {
-        d.occurrences.splice(Number(b.dataset.i), 1);
+        const i = Number(b.dataset.i);
+        d.occurrences.splice(i, 1);
+        d.kinds.splice(i, 1);
+        this._render();
+      }));
+
+    root.querySelectorAll("button.kind").forEach((b) =>
+      b.addEventListener("click", () => {
+        const i = Number(b.dataset.i);
+        const toText = (d.kinds[i] || "clock") === "clock";
+        d.kinds[i] = toText ? "text" : "clock";
+        // Going to text keeps the value so it can be extended into a sun
+        // string; going back to a picker drops anything it cannot display.
+        if (!toText && !isClock(d.occurrences[i])) d.occurrences[i] = "12:00";
+        d.error = null;
         this._render();
       }));
 
     const add = root.querySelector("button.add");
-    if (add) add.addEventListener("click", () => { d.occurrences.push("12:00"); this._render(); });
+    if (add) add.addEventListener("click", () => {
+      d.occurrences.push("12:00");
+      d.kinds.push("clock");
+      this._render();
+    });
 
     // Live firing count while the interval is being edited.
     ["#start", "#stop", "#every"].forEach((sel) => {
@@ -436,6 +473,7 @@ option { background: var(--card-background-color); color: var(--primary-text-col
 .interval { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .count { color: var(--secondary-text-color); font-size: .85em; padding-bottom: 10px; }
 .hint { color: var(--secondary-text-color); font-size: .8em; margin-top: 4px; }
+button.kind { padding: 6px 9px; line-height: 1; font-size: 1em; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .error { background: var(--error-color); color: var(--text-primary-color);
          padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; }
