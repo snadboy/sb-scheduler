@@ -71,11 +71,38 @@ def normalise_pattern(pattern: dict | None) -> dict:
     }
 
 
-def normalise_step(data: dict, index: int) -> dict:
+def allocate_step_ids(steps: list[dict]) -> list[str]:
+    """One id per step: keep the ids already assigned, never reuse one.
+
+    Positional ids collide. Delete the first of two steps and add a new one and
+    both land on `s2` -- after which `merge_steps` overlays two steps onto one
+    stored step, and `_handlers` / `_step_next`, which are keyed by step id,
+    collapse the pair so one of them silently never fires.
+
+    An id that an earlier step in the same list already claimed is reallocated
+    for the same reason.
+    """
+    taken = {s.get(CONF_STEP_ID) for s in steps if isinstance(s, dict)} - {None, ""}
+    used: set[str] = set()
+    out: list[str] = []
+    counter = 0
+    for step in steps:
+        sid = step.get(CONF_STEP_ID) if isinstance(step, dict) else None
+        if not sid or sid in used:
+            counter += 1
+            while f"s{counter}" in taken or f"s{counter}" in used:
+                counter += 1
+            sid = f"s{counter}"
+        used.add(sid)
+        out.append(sid)
+    return out
+
+
+def normalise_step(data: dict, index: int, step_id: str | None = None) -> dict:
     """A step = a time pattern + the actions to run at it."""
     data = dict(data or {})
     return {
-        CONF_STEP_ID: data.get(CONF_STEP_ID) or f"s{index + 1}",
+        CONF_STEP_ID: step_id or data.get(CONF_STEP_ID) or f"s{index + 1}",
         "name": data.get("name") or f"Step {index + 1}",
         CONF_ENABLED: bool(data.get(CONF_ENABLED, True)),
         CONF_PATTERN: normalise_pattern(data.get(CONF_PATTERN)),
@@ -123,7 +150,10 @@ def normalise_schedule(data: dict) -> dict:
         "name": data.get("name") or "Schedule",
         CONF_ENABLED: bool(data.get(CONF_ENABLED, True)),
         CONF_DAY_SET: data.get(CONF_DAY_SET) or "daily",
-        CONF_STEPS: [normalise_step(s, i) for i, s in enumerate(steps)],
+        CONF_STEPS: [
+            normalise_step(s, i, sid)
+            for i, (s, sid) in enumerate(zip(steps, allocate_step_ids(steps)))
+        ],
         # Rollup across steps. Carried through every edit: an edit must not
         # erase the run history.
         ATTR_LAST_TRIGGERED: data.get(ATTR_LAST_TRIGGERED),

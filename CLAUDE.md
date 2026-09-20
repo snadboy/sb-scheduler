@@ -30,6 +30,12 @@ five schedules became four.
 - `run_now` takes an optional `step_id`; without one it runs every step.
 - `next_trigger(pattern, day_set, now, sun_resolver, label)` takes a PATTERN
   now, not a schedule, with `label` only for logging.
+- **Step ids are allocated, not positional** (`allocate_step_ids`). `s{index+1}`
+  collides: delete the first of two steps, add a new one, and both land on
+  `s2` -- after which `merge_steps` overlays two steps onto one stored step and
+  `_handlers` / `_step_next`, keyed by step id, collapse the pair so one
+  silently never fires. An id an earlier step already claimed is reallocated
+  for the same reason. The card relies on this: it saves new steps with NO id.
 
 ## Where things are
 

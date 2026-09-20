@@ -157,6 +157,26 @@ check("omitting a step still deletes it",
 check("an unknown id is still an insert",
       store.merge_steps(stored, [{"step_id": "s9", "name": "New"}])[0]["name"], "New")
 
+print("\nstep ids must never collide")
+two = store.normalise_schedule({"name": "X", "steps": [
+    {"name": "On", "actions": [{"service": "light.turn_on"}]},
+    {"name": "Off", "actions": [{"service": "light.turn_off"}]}]})["steps"]
+check("ids start positional", [s["step_id"] for s in two], ["s1", "s2"])
+
+# Delete the FIRST step, then add one. Positionally the new step is index 1,
+# which used to mean "s2" -- the id the surviving step already holds.
+after = store.normalise_schedule({"name": "X", "steps": store.merge_steps(
+    [s for s in two if s["step_id"] != "s1"],
+    [{"step_id": "s2"}, {"name": "New", "actions": [{"service": "light.toggle"}]}],
+)})["steps"]
+ids = [s["step_id"] for s in after]
+check("delete-then-add does not reuse an id", len(set(ids)), 2)
+check("the surviving step keeps its id and actions",
+      (after[0]["step_id"], after[0]["actions"][0]["service"]), ("s2", "light.turn_off"))
+check("an explicit duplicate id is reallocated too",
+      len({s["step_id"] for s in store.normalise_schedule({"steps": [
+          {"step_id": "s1", "name": "A"}, {"step_id": "s1", "name": "B"}]})["steps"]}), 2)
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S)")
