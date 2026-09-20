@@ -139,11 +139,15 @@ distinct per-time actions would need per-occurrence actions.
 Cutover: enable the sb_scheduler one and disable the old integration's, one at
 a time. Do not run both.
 
-**Cut over 2026-09-19:** bedside lamps and garden irrigation. Garden lights
-(two schedules) still on the old integration.
+**Cut over 2026-09-19: ALL of them.** Every schedule on the old integration is
+disabled; `sb_scheduler` now owns bedside lamps, garden irrigation and the two
+garden-lights schedules. The old integration is still installed (uninstalling is
+the last step, once this has run unattended for a while).
 
-**`switch.b_hyve_node_garden` is a TP-Link HS103 smart plug** (`platform:
-tplink`), not the b-hyve irrigation integration. It powers the b-hyve node; the
+**`switch.b_hyve_node_garden`** (friendly name "B-Hyve Outlet" since
+2026-09-19) **is a TP-Link HS103 smart plug** (`platform: tplink`), not the
+b-hyve irrigation integration — that device is "Irrigation Raised Garden"
+(`valve.raised_garden_raised_gardens_zone` and friends). It powers the b-hyve node; the
 watering schedule itself lives in the b-hyve app. So "Garden Irrigation" is a
 daily 06:00 "make sure the controller has power" re-assert, and firing it is
 idempotent — it does not start watering. It has sat `on` for days at a time,
