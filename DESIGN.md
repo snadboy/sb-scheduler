@@ -226,6 +226,27 @@ one-element sort never compares) — one mixing `00:00` with `sunset+00:15` does
 not. `times_on` normalises before sorting. This shipped broken and was caught
 only by recreating a real schedule.
 
+## OPEN: the workday day-set ignores calendar.days_off
+
+The cutover dropped PTO handling. The old chain was Workday integration +
+`calendar.days_off` → template sensor; the new `workday` day-set reads only
+`calendar.workday_sensor_us_calendar`. Verified: 2026-11-27 and 2026-12-24 are
+in `days_off` but report **eligible=True**, so the wake-up light will fire on
+both.
+
+**The two-tier precedence cannot express the fix.** `include > exclude > mask`,
+and the workday calendar is an `include`, so adding `days_off` as an `exclude`
+loses. The template sensor's real logic needs three tiers:
+
+1. **force** — a `days_off` entry titled "Workday" reinstates a workday
+2. **veto** — any other `days_off` entry cancels it
+3. **base** — the workday calendar, or the weekday mask
+
+`include` currently conflates 1 and 3. Splitting them out (a `base_calendars`
+tier, leaving `include` as force-only) is the fix, plus a storage migration.
+The "Workday"-titled override also needs the calendar title filter already
+listed under Open questions.
+
 ## Known wart: the work week is written twice
 
 "Which days are work days" lives in two places — the **Workday integration's**

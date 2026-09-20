@@ -119,6 +119,14 @@ The two fixes from the predecessor fork carry forward and must not regress:
    model this generalises into day-sets and should read a *calendar*, not a
    binary_sensor — see DESIGN.md on why the sensor can only answer "now".
 
+## OPEN regression: days_off is not consulted
+
+See DESIGN.md. The `workday` day-set reads only the Workday integration's
+calendar, so `calendar.days_off` (PTO) no longer suppresses anything.
+`snadboy/ha-workdays-card` — the editor for that calendar — is still installed
+and live behind a Bubble pop-up (`#workdays`) on the Home view. Do not remove
+it.
+
 ## Recreating the real schedules
 
 The three live schedules map onto four sb_scheduler schedules, all created
