@@ -298,13 +298,19 @@ class DaySet:
 
     def is_eligible(self, day: datetime.date) -> bool:
         """Whether `day` is in this set. False outside the computed window."""
-        if self._window and not (self._window[0] <= day <= self._window[1]):
+        if self._window and day > self._window[1]:
+            # Past the horizon is worth saying: it means a real limit was hit.
             _LOGGER.warning(
-                "Day-set '%s' asked about %s, outside its %s..%s window",
-                self.id,
-                day,
-                self._window[0],
-                self._window[1],
+                "Day-set '%s' asked about %s, beyond its %s horizon",
+                self.id, day, self._window[1],
+            )
+            return False
+        if self._window and day < self._window[0]:
+            # Before the window is ordinary — a calendar view of an old month.
+            # Not an error, and not worth a log line per rendered cell.
+            _LOGGER.debug(
+                "Day-set '%s' asked about %s, before its %s window start",
+                self.id, day, self._window[0],
             )
             return False
         return day in self._eligible

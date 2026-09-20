@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 
 from homeassistant.core import HomeAssistant, callback
@@ -14,6 +15,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_DAY_SETS,
+    HORIZON_DAYS,
+    PAST_DAYS,
     REFRESH_HOUR,
     REFRESH_MINUTE,
     SIGNAL_DAY_SETS_UPDATED,
@@ -67,8 +70,13 @@ class DaySetRegistry:
     async def async_refresh(self) -> None:
         """Recompute every day-set from today forward."""
         today = dt_util.now().date()
+        # Start before today so the published calendars can render the current
+        # month, while keeping the full forward horizon.
+        start = today - datetime.timedelta(days=PAST_DAYS)
         for day_set in self.day_sets.values():
-            await day_set.async_refresh(self.hass, today)
+            await day_set.async_refresh(
+                self.hass, start, days=HORIZON_DAYS + PAST_DAYS
+            )
         async_dispatcher_send(self.hass, SIGNAL_DAY_SETS_UPDATED)
 
     async def _handle_midnight(self, _now) -> None:

@@ -309,6 +309,12 @@ Evaluation widens the window by `|offset|` on both sides before shifting and
 clips back afterwards; without that, a `-1` set loses its first date at the
 window edge.
 
+Day-sets also compute **`PAST_DAYS` (45) into the past**, because they are
+published as calendar entities and HA's calendar panel opens on the current
+month — it routinely asks about dates before today. `is_eligible` warns only
+past the forward horizon (a real limit); a question about a date before the
+window is ordinary and logs at DEBUG.
+
 The holiday shift compounds correctly and for free: when Trash Day moves from
 Fri 2026-11-27 to Sat 11-28 for Thanksgiving, Trash Day Eve moves from Thu to
 Fri with it.

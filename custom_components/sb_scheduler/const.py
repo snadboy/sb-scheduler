@@ -41,6 +41,12 @@ WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 # the bug this replaces. Cheap because it is one calendar query per source.
 HORIZON_DAYS = 400
 
+# Also compute a little into the PAST. A day-set is published as a calendar
+# entity, and HA's calendar panel opens on the current month — so it is
+# routinely asked about dates before today. Without this the entity shows an
+# empty first half of the month and logs a warning per query.
+PAST_DAYS = 45
+
 # Refresh the window shortly after midnight, so "today" is always in range.
 REFRESH_HOUR = 0
 REFRESH_MINUTE = 5
