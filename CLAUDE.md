@@ -136,8 +136,22 @@ action per timeslot**, this model has one action list per schedule. Splitting by
 action is a faithful and arguably clearer translation, but a schedule with many
 distinct per-time actions would need per-occurrence actions.
 
-Cutover: enable the sb_scheduler ones and disable the old integration's, one at
+Cutover: enable the sb_scheduler one and disable the old integration's, one at
 a time. Do not run both.
+
+**Bedside lamps cut over 2026-09-19** — `switch.bedside_lamps_wakeup` on,
+`switch.schedule_dan_bedside_lamps` off. Irrigation and garden lights still on
+the old integration.
+
+### The action-shape landmine
+
+`parse_service_call` reads `action["service_data"]` with an **unconditional**
+subscript, so an action without that key raises KeyError **when the schedule
+fires** — not when it is created. Three of the four recreated schedules were
+written without it and would have died on their first real run. `normalise_action`
+in the store now supplies `{}` and accepts `data` as an alias (the key
+scheduler-component's own storage uses). It runs on load too, so already-stored
+schedules are repaired in memory even before the file is rewritten.
 
 ## Last run
 

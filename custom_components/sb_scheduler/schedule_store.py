@@ -36,6 +36,23 @@ STORAGE_VERSION = 1
 SAVE_DELAY = 5
 
 
+def normalise_action(action: dict) -> dict:
+    """Give an action the shape the inherited action engine assumes.
+
+    `parse_service_call` reads `data[ATTR_SERVICE_DATA]` with an unconditional
+    subscript, so an action without `service_data` raises KeyError the moment
+    the schedule fires -- not when it is created, which makes it a landmine.
+    `data` is accepted as an alias because that is the key
+    scheduler-component's own storage uses.
+    """
+    out = dict(action or {})
+    if "service_data" not in out:
+        out["service_data"] = out.pop("data", None) or {}
+    else:
+        out.pop("data", None)
+    return out
+
+
 def normalise_schedule(data: dict) -> dict:
     """Fill in defaults so the rest of the code can stop checking."""
     pattern = dict(data.get(CONF_PATTERN) or {})
@@ -61,7 +78,7 @@ def normalise_schedule(data: dict) -> dict:
         CONF_ENABLED: bool(data.get(CONF_ENABLED, True)),
         CONF_DAY_SET: data.get(CONF_DAY_SET) or "daily",
         CONF_PATTERN: pattern,
-        CONF_ACTIONS: list(data.get(CONF_ACTIONS) or []),
+        CONF_ACTIONS: [normalise_action(a) for a in (data.get(CONF_ACTIONS) or [])],
         # Carried through every edit: an edit must not erase the run history.
         ATTR_LAST_TRIGGERED: data.get(ATTR_LAST_TRIGGERED),
         "conditions": list(data.get("conditions") or []),
