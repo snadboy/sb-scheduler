@@ -119,11 +119,19 @@ The two fixes from the predecessor fork carry forward and must not regress:
    model this generalises into day-sets and should read a *calendar*, not a
    binary_sensor — see DESIGN.md on why the sensor can only answer "now".
 
-## OPEN regression: days_off is not consulted
+## Day-set tiers (and the days_off fix)
 
-See DESIGN.md. The `workday` day-set reads only the Workday integration's
-calendar, so `calendar.days_off` (PTO) no longer suppresses anything.
-`snadboy/ha-workdays-card` — the editor for that calendar — is still installed
+Precedence is **force > veto > base**; see DESIGN.md. `include_*` is the legacy
+name for the base tier and is still read.
+
+**Renaming a DaySet field breaks the calendar platform silently.** Changing
+`include_calendars` to `base_calendars` left `calendar.py` reading the old name,
+so every day-set calendar came back `unavailable` with `restored: true` and NO
+error in the log. The schedules kept firing, because they use the registry
+objects rather than the calendar entities — so the breakage was invisible from
+the thing that matters. Grep every module for a field before renaming it.
+
+`snadboy/ha-workdays-card` — the editor for `calendar.days_off` — is installed
 and live behind a Bubble pop-up (`#workdays`) on the Home view. Do not remove
 it.
 

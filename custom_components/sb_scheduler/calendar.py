@@ -67,8 +67,9 @@ class DaySetCalendar(CalendarEntity):
             "eligible_today": self._day_set.is_eligible(today),
             "next_date": next_date.isoformat() if next_date else None,
             "weekdays": self._day_set.weekdays,
-            "include_calendars": self._day_set.include_calendars,
+            "base_calendars": self._day_set.base_calendars,
             "exclude_calendars": self._day_set.exclude_calendars,
+            "force_calendars": self._day_set.force_calendars,
             "inverted": self._day_set.invert,
         }
 

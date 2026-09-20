@@ -4,9 +4,10 @@
     "step": {
       "user": {
         "title": "SB Scheduler",
-        "description": "Day-sets are named groups of dates — Workday, School Day, Trash Day — that schedules can run against. Pick a workday calendar now and Workday and Non-workday are created for you; you can add more day-sets afterwards under Configure.\n\nThe Workday integration publishes one (typically calendar.workday_sensor_us_calendar). Leave it empty to start with just Daily and Weekend.",
+        "description": "Day-sets are named groups of dates \u2014 Workday, School Day, Trash Day \u2014 that schedules can run against. Pick a workday calendar and Workday and Non-workday are created for you; add a days-off calendar too and time off will cancel a workday, while an entry titled \"Workday\" reinstates one.\n\nThe Workday integration publishes a workday calendar (typically calendar.workday_sensor_us_calendar). Leave both empty to start with just Daily and Weekend.",
         "data": {
-          "workday_calendar": "Workday calendar (optional)"
+          "workday_calendar": "Workday calendar (optional)",
+          "days_off_calendar": "Days-off calendar (optional)"
         }
       }
     },
@@ -26,44 +27,70 @@
       },
       "add": {
         "title": "Add a day-set",
-        "description": "A day-set is a named group of dates. Start from the weekdays it can fall on, then narrow or widen it with calendars and dates.\n\nDates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+        "description": "A day-set is a named group of dates, built in three tiers:\n\n1. **Base** \u2014 the weekdays and calendars it is made of\n2. **Cancelled** \u2014 what takes a day back out\n3. **Always** \u2014 what overrides a cancellation\n\nDates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
         "data": {
           "name": "Name",
           "weekdays": "Weekdays it can fall on",
-          "exclude_calendars": "Excluded by these calendars",
-          "exclude_dates": "Excluded dates",
-          "include_calendars": "Included by these calendars",
-          "include_dates": "Included dates",
+          "base_calendars": "Days come from these calendars",
+          "base_dates": "\u2026and these dates",
+          "exclude_calendars": "Cancelled by these calendars",
+          "exclude_dates": "\u2026and these dates",
+          "exclude_match": "Only cancel when the entry matches",
+          "force_calendars": "Always included by these calendars",
+          "force_dates": "\u2026and these dates",
+          "force_match": "Only force when the entry matches",
           "invert": "Invert (every date NOT in this set)"
         },
         "data_description": {
-          "weekdays": "Leave empty if the day-set comes entirely from an 'included' calendar, such as Trash Day.",
-          "exclude_dates": "School breaks, institute days. One range covers a whole summer.",
-          "include_dates": "Dates that count even when excluded — these win over everything else.",
+          "weekdays": "The base tier, together with the calendars below. Leave empty if the day-set comes entirely from a calendar, such as Trash Day.",
+          "base_calendars": "What this day-set is made of \u2014 e.g. the Workday integration's calendar.",
+          "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+          "exclude_calendars": "These cancel a day \u2014 e.g. a days-off calendar for time off.",
+          "exclude_match": "Optional text matched against an event's title or description, so only some entries cancel. Leave empty to cancel on any entry.",
+          "force_calendars": "These win over everything, including the cancellations above.",
+          "force_match": "Optional text matched against an event's title or description \u2014 e.g. \"Workday\" so only a days-off entry named that reinstates a workday.",
           "invert": "Turns Workday into Non-workday without configuring it twice."
         }
       },
       "edit": {
         "title": "Edit {name}",
-        "description": "Dates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+        "description": "Precedence is Always > Cancelled > Base.\n\nDates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
         "data": {
           "name": "Name",
           "weekdays": "Weekdays it can fall on",
-          "exclude_calendars": "Excluded by these calendars",
-          "exclude_dates": "Excluded dates",
-          "include_calendars": "Included by these calendars",
-          "include_dates": "Included dates",
+          "base_calendars": "Days come from these calendars",
+          "base_dates": "\u2026and these dates",
+          "exclude_calendars": "Cancelled by these calendars",
+          "exclude_dates": "\u2026and these dates",
+          "exclude_match": "Only cancel when the entry matches",
+          "force_calendars": "Always included by these calendars",
+          "force_dates": "\u2026and these dates",
+          "force_match": "Only force when the entry matches",
           "invert": "Invert (every date NOT in this set)"
+        },
+        "data_description": {
+          "weekdays": "The base tier, together with the calendars below. Leave empty if the day-set comes entirely from a calendar, such as Trash Day.",
+          "base_calendars": "What this day-set is made of \u2014 e.g. the Workday integration's calendar.",
+          "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+          "exclude_calendars": "These cancel a day \u2014 e.g. a days-off calendar for time off.",
+          "exclude_match": "Optional text matched against an event's title or description, so only some entries cancel. Leave empty to cancel on any entry.",
+          "force_calendars": "These win over everything, including the cancellations above.",
+          "force_match": "Optional text matched against an event's title or description \u2014 e.g. \"Workday\" so only a days-off entry named that reinstates a workday.",
+          "invert": "Turns Workday into Non-workday without configuring it twice."
         }
       },
       "pick_edit": {
         "title": "Edit a day-set",
-        "data": { "id": "Day-set" }
+        "data": {
+          "id": "Day-set"
+        }
       },
       "pick_remove": {
         "title": "Remove a day-set",
         "description": "Its calendar entity is removed too. Schedules using it will stop matching.",
-        "data": { "id": "Day-set" }
+        "data": {
+          "id": "Day-set"
+        }
       }
     },
     "error": {
@@ -91,8 +118,14 @@
       "name": "Query day-set",
       "description": "Ask whether a date is in a day-set, and when the next matching date is.",
       "fields": {
-        "day_set": { "name": "Day-set", "description": "The day-set id, shown on its calendar entity." },
-        "date": { "name": "Date", "description": "Defaults to today." }
+        "day_set": {
+          "name": "Day-set",
+          "description": "The day-set id, shown on its calendar entity."
+        },
+        "date": {
+          "name": "Date",
+          "description": "Defaults to today."
+        }
       }
     },
     "refresh": {

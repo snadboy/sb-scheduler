@@ -226,7 +226,7 @@ one-element sort never compares) — one mixing `00:00` with `sunset+00:15` does
 not. `times_on` normalises before sorting. This shipped broken and was caught
 only by recreating a real schedule.
 
-## OPEN: the workday day-set ignores calendar.days_off
+## RESOLVED: three-tier day-sets (was: the workday day-set ignores days_off)
 
 The cutover dropped PTO handling. The old chain was Workday integration +
 `calendar.days_off` → template sensor; the new `workday` day-set reads only
@@ -234,18 +234,25 @@ The cutover dropped PTO handling. The old chain was Workday integration +
 in `days_off` but report **eligible=True**, so the wake-up light will fire on
 both.
 
-**The two-tier precedence cannot express the fix.** `include > exclude > mask`,
-and the workday calendar is an `include`, so adding `days_off` as an `exclude`
-loses. The template sensor's real logic needs three tiers:
+Fixed 2026-09-20 by splitting the tiers. Precedence is now **force > veto >
+base**:
 
-1. **force** — a `days_off` entry titled "Workday" reinstates a workday
-2. **veto** — any other `days_off` entry cancels it
-3. **base** — the workday calendar, or the weekday mask
+1. **force** (`force_calendars` / `force_dates` / `force_match`) — wins outright
+2. **veto** (`exclude_*`, with `exclude_match`) — cancels an eligible day
+3. **base** (`weekdays` mask and/or `base_calendars` / `base_dates`)
 
-`include` currently conflates 1 and 3. Splitting them out (a `base_calendars`
-tier, leaving `include` as force-only) is the fix, plus a storage migration.
-The "Workday"-titled override also needs the calendar title filter already
-listed under Open questions.
+`include_*` used to mean the base tier and is still read as such, so existing
+config keeps working with no migration step.
+
+`*_match` is a case-insensitive substring test against an event's **summary and
+description**. Both are needed: a days-off entry is identified by its summary
+("Workday"), while Google's holiday feed marks the real ones only in the
+description ("Public holiday" vs "Observance") — which also closes that open
+question.
+
+Live wiring: `workday` = base `calendar.workday_sensor_us_calendar`, veto
+`calendar.days_off`, force `calendar.days_off` matching "Workday".
+Verified 2026-11-27 and 2026-12-24 now report **False**.
 
 ## Known wart: the work week is written twice
 

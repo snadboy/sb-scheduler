@@ -11,10 +11,23 @@ CONF_ID = "id"
 CONF_NAME = "name"
 CONF_WEEKDAYS = "weekdays"
 CONF_INVERT = "invert"
-CONF_INCLUDE_CALENDARS = "include_calendars"
+# Three tiers, because two could not express the real workday rule:
+#   force  — wins outright (a days-off entry titled "Workday" reinstates one)
+#   veto   — cancels an otherwise-eligible day
+#   base   — what is eligible to begin with: a weekday mask and/or calendars
+# `include_*` was the old name for what is really the BASE tier; it is still
+# read so existing config keeps working.
+CONF_BASE_CALENDARS = "base_calendars"
+CONF_BASE_DATES = "base_dates"
+CONF_FORCE_CALENDARS = "force_calendars"
+CONF_FORCE_DATES = "force_dates"
+CONF_FORCE_MATCH = "force_match"
 CONF_EXCLUDE_CALENDARS = "exclude_calendars"
-CONF_INCLUDE_DATES = "include_dates"
 CONF_EXCLUDE_DATES = "exclude_dates"
+CONF_EXCLUDE_MATCH = "exclude_match"
+# legacy
+CONF_INCLUDE_CALENDARS = "include_calendars"
+CONF_INCLUDE_DATES = "include_dates"
 
 WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 

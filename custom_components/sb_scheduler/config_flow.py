@@ -24,12 +24,16 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_BASE_CALENDARS,
+    CONF_BASE_DATES,
     CONF_DAY_SETS,
     CONF_EXCLUDE_CALENDARS,
     CONF_EXCLUDE_DATES,
+    CONF_EXCLUDE_MATCH,
+    CONF_FORCE_CALENDARS,
+    CONF_FORCE_DATES,
+    CONF_FORCE_MATCH,
     CONF_ID,
-    CONF_INCLUDE_CALENDARS,
-    CONF_INCLUDE_DATES,
     CONF_INVERT,
     CONF_NAME,
     CONF_WEEKDAYS,
@@ -50,15 +54,28 @@ WEEKDAY_PICKER = SelectSelector(
 )
 
 
+TEXT = TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))
+
+
 def day_set_schema(defaults: dict | None = None) -> vol.Schema:
-    """The one form used for both add and edit."""
+    """The one form used for both add and edit.
+
+    Grouped by tier: BASE (what is eligible), then EXCLUDED (what cancels it),
+    then ALWAYS (what overrides a cancellation). Order matters -- it reads as
+    the precedence chain, which is otherwise easy to get backwards.
+    """
     d = defaults or {}
+    # Legacy config used include_* for what is now the base tier.
+    base_cals = d.get(CONF_BASE_CALENDARS, d.get("include_calendars", []))
+    base_dates = d.get(CONF_BASE_DATES, d.get("include_dates", ""))
     return vol.Schema(
         {
             vol.Required(CONF_NAME, default=d.get(CONF_NAME, "")): str,
             vol.Optional(
                 CONF_WEEKDAYS, default=d.get(CONF_WEEKDAYS, [])
             ): WEEKDAY_PICKER,
+            vol.Optional(CONF_BASE_CALENDARS, default=base_cals): CALENDARS,
+            vol.Optional(CONF_BASE_DATES, default=base_dates): DATES,
             vol.Optional(
                 CONF_EXCLUDE_CALENDARS, default=d.get(CONF_EXCLUDE_CALENDARS, [])
             ): CALENDARS,
@@ -66,11 +83,17 @@ def day_set_schema(defaults: dict | None = None) -> vol.Schema:
                 CONF_EXCLUDE_DATES, default=d.get(CONF_EXCLUDE_DATES, "")
             ): DATES,
             vol.Optional(
-                CONF_INCLUDE_CALENDARS, default=d.get(CONF_INCLUDE_CALENDARS, [])
+                CONF_EXCLUDE_MATCH, default=d.get(CONF_EXCLUDE_MATCH, "")
+            ): TEXT,
+            vol.Optional(
+                CONF_FORCE_CALENDARS, default=d.get(CONF_FORCE_CALENDARS, [])
             ): CALENDARS,
             vol.Optional(
-                CONF_INCLUDE_DATES, default=d.get(CONF_INCLUDE_DATES, "")
+                CONF_FORCE_DATES, default=d.get(CONF_FORCE_DATES, "")
             ): DATES,
+            vol.Optional(
+                CONF_FORCE_MATCH, default=d.get(CONF_FORCE_MATCH, "")
+            ): TEXT,
             vol.Optional(CONF_INVERT, default=d.get(CONF_INVERT, False)): BooleanSelector(),
         }
     )
@@ -79,7 +102,7 @@ def day_set_schema(defaults: dict | None = None) -> vol.Schema:
 def _validate_dates(user_input: dict) -> dict[str, str]:
     """Hand-typed dates are the most likely thing to be wrong. Say which."""
     errors: dict[str, str] = {}
-    for key in (CONF_INCLUDE_DATES, CONF_EXCLUDE_DATES):
+    for key in (CONF_BASE_DATES, CONF_EXCLUDE_DATES, CONF_FORCE_DATES):
         try:
             parse_date_spec(user_input.get(key) or "")
         except InvalidDateSpec:
@@ -87,7 +110,8 @@ def _validate_dates(user_input: dict) -> dict[str, str]:
     return errors
 
 
-def _seed_day_sets(workday_calendar: str | None) -> list[dict]:
+def _seed_day_sets(workday_calendar: str | None,
+                   days_off_calendar: str | None = None) -> list[dict]:
     """Start with something usable rather than an empty list."""
     day_sets = [
         {
@@ -104,18 +128,17 @@ def _seed_day_sets(workday_calendar: str | None) -> list[dict]:
         },
     ]
     if workday_calendar:
+        # Base = the workday calendar; PTO vetoes it; a days-off entry titled
+        # "Workday" reinstates it. Wired only if a days-off calendar exists.
+        shape = {CONF_BASE_CALENDARS: [workday_calendar]}
+        if days_off_calendar:
+            shape[CONF_EXCLUDE_CALENDARS] = [days_off_calendar]
+            shape[CONF_FORCE_CALENDARS] = [days_off_calendar]
+            shape[CONF_FORCE_MATCH] = "Workday"
         day_sets += [
-            {
-                CONF_ID: "workday",
-                CONF_NAME: "Workday",
-                CONF_INCLUDE_CALENDARS: [workday_calendar],
-            },
-            {
-                CONF_ID: "non_workday",
-                CONF_NAME: "Non-workday",
-                CONF_INCLUDE_CALENDARS: [workday_calendar],
-                CONF_INVERT: True,
-            },
+            {CONF_ID: "workday", CONF_NAME: "Workday", **shape},
+            {CONF_ID: "non_workday", CONF_NAME: "Non-workday", **shape,
+             CONF_INVERT: True},
         ]
     return day_sets
 
@@ -135,7 +158,8 @@ class SbSchedulerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data={},
                 options={
                     CONF_DAY_SETS: _seed_day_sets(
-                        user_input.get(CONF_WORKDAY_CALENDAR)
+                        user_input.get(CONF_WORKDAY_CALENDAR),
+                        user_input.get("days_off_calendar"),
                     )
                 },
             )
@@ -146,7 +170,10 @@ class SbSchedulerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Optional(CONF_WORKDAY_CALENDAR): EntitySelector(
                         EntitySelectorConfig(domain="calendar")
-                    )
+                    ),
+                    vol.Optional("days_off_calendar"): EntitySelector(
+                        EntitySelectorConfig(domain="calendar")
+                    ),
                 }
             ),
         )

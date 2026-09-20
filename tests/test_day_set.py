@@ -161,10 +161,10 @@ workday_events = [
 ]
 hass = FakeHass({"calendar.workday": workday_events})
 
-workday = DaySet(id="workday", name="Workday", include_calendars=["calendar.workday"])
+workday = DaySet(id="workday", name="Workday", base_calendars=["calendar.workday"])
 non_workday = DaySet(
     id="non_workday", name="Non-workday",
-    include_calendars=["calendar.workday"], invert=True,
+    base_calendars=["calendar.workday"], invert=True,
 )
 asyncio.run(workday.async_refresh(hass, D("2026-11-23"), days=10))
 asyncio.run(non_workday.async_refresh(hass, D("2026-11-23"), days=10))
@@ -191,8 +191,8 @@ check("last break day", spanned.is_eligible(D("2027-08-17")), False)
 check("day after break", spanned.is_eligible(D("2027-08-18")), True)
 
 
-# --- precedence: include beats exclude -------------------------------------
-print("\nprecedence: include > exclude > mask")
+# --- precedence: force > veto > base ---------------------------------------
+print("\nprecedence: force > veto > base")
 both = FakeHass({
     "calendar.off": [allday("2026-11-26", "2026-11-27", "Day off")],
     "calendar.on": [allday("2026-11-26", "2026-11-27", "Workday")],
@@ -201,10 +201,10 @@ forced = DaySet(
     id="p", name="P",
     weekdays=["mon", "tue", "wed", "thu", "fri"],
     exclude_calendars=["calendar.off"],
-    include_calendars=["calendar.on"],
+    force_calendars=["calendar.on"],
 )
 asyncio.run(forced.async_refresh(both, D("2026-11-23"), days=10))
-check("force-include overrides the veto", forced.is_eligible(D("2026-11-26")), True)
+check("force overrides the veto", forced.is_eligible(D("2026-11-26")), True)
 
 vetoed = DaySet(
     id="v", name="V",
@@ -216,12 +216,70 @@ check("veto alone still wins over the mask", vetoed.is_eligible(D("2026-11-26"))
 
 # An include source makes a date eligible even against the weekday mask --
 # this is what lets Trash Day work with no mask at all.
-check("include beats the mask on a Saturday",
-      forced.is_eligible(D("2026-11-28")), False)
 saturday = FakeHass({"calendar.on": [allday("2026-11-28", "2026-11-29")]})
-satset = DaySet(id="s", name="S", include_calendars=["calendar.on"])
+satset = DaySet(id="s", name="S", base_calendars=["calendar.on"])
 asyncio.run(satset.async_refresh(saturday, D("2026-11-23"), days=10))
-check("mask-less include-only set", satset.is_eligible(D("2026-11-28")), True)
+check("mask-less base-calendar set", satset.is_eligible(D("2026-11-28")), True)
+
+# THE regression this tier split exists to fix: a base calendar MUST be
+# vetoable. Under the old two-tier model the workday calendar was an
+# `include`, which outranked `exclude`, so PTO was silently ignored.
+print("\nregression: a base calendar can be vetoed (days_off)")
+work = FakeHass({
+    "calendar.workday": [allday("2026-11-26", "2026-11-28"),
+                         allday("2026-12-24", "2026-12-25")],
+    "calendar.days_off": [allday("2026-11-27", "2026-11-28", "Day after Thanksgiving"),
+                          allday("2026-12-24", "2026-12-25", "Day off")],
+})
+workday = DaySet(
+    id="workday", name="Workday",
+    base_calendars=["calendar.workday"],
+    exclude_calendars=["calendar.days_off"],
+)
+asyncio.run(workday.async_refresh(work, D("2026-11-20"), days=60))
+check("a normal workday still counts", workday.is_eligible(D("2026-11-26")), True)
+check("PTO cancels a workday", workday.is_eligible(D("2026-11-27")), False)
+check("and again at Christmas Eve", workday.is_eligible(D("2026-12-24")), False)
+
+# The "Workday"-titled override, which needs the title filter.
+print("\nforce_match: a days-off entry titled 'Workday' reinstates one")
+override = FakeHass({
+    "calendar.workday": [],
+    "calendar.days_off": [allday("2026-11-27", "2026-11-28", "Day after Thanksgiving"),
+                          allday("2026-11-30", "2026-12-01", "Workday")],
+})
+ds = DaySet(
+    id="w", name="W",
+    weekdays=["mon", "tue", "wed", "thu", "fri"],
+    exclude_calendars=["calendar.days_off"],
+    force_calendars=["calendar.days_off"],
+    force_match="Workday",
+)
+asyncio.run(ds.async_refresh(override, D("2026-11-23"), days=20))
+check("plain day-off is vetoed", ds.is_eligible(D("2026-11-27")), False)
+check("one titled 'Workday' is reinstated", ds.is_eligible(D("2026-11-30")), True)
+
+print("\nexclude_match filters by title/description")
+mixed = FakeHass({"calendar.hol": [
+    dict(allday("2026-11-26", "2026-11-27", "Thanksgiving Day"), description="Public holiday"),
+    dict(allday("2026-11-27", "2026-11-28", "Black Friday"), description="Observance"),
+]})
+pub = DaySet(
+    id="h", name="H", weekdays=["mon", "tue", "wed", "thu", "fri"],
+    exclude_calendars=["calendar.hol"], exclude_match="Public holiday",
+)
+asyncio.run(pub.async_refresh(mixed, D("2026-11-23"), days=10))
+check("a public holiday is excluded", pub.is_eligible(D("2026-11-26")), False)
+check("an observance is NOT", pub.is_eligible(D("2026-11-27")), True)
+
+print("\nmigration: legacy include_* is read as base")
+legacy = DaySet.from_config({
+    "id": "l", "name": "L", "include_calendars": ["calendar.on"],
+    "include_dates": "2026-12-25",
+})
+check("include_calendars -> base_calendars", legacy.base_calendars, ["calendar.on"])
+check("include_dates -> base_dates", legacy.base_dates, "2026-12-25")
+check("force stays empty", legacy.force_calendars, [])
 
 
 # --- runs() merging --------------------------------------------------------

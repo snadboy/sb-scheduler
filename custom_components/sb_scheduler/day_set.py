@@ -20,8 +20,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_BASE_CALENDARS,
+    CONF_BASE_DATES,
     CONF_EXCLUDE_CALENDARS,
     CONF_EXCLUDE_DATES,
+    CONF_EXCLUDE_MATCH,
+    CONF_FORCE_CALENDARS,
+    CONF_FORCE_DATES,
+    CONF_FORCE_MATCH,
     CONF_ID,
     CONF_INCLUDE_CALENDARS,
     CONF_INCLUDE_DATES,
@@ -82,11 +88,28 @@ def _dates_in_ranges(
     return out
 
 
+def _event_matches(event: dict, match: str) -> bool:
+    """Case-insensitive substring test against summary AND description.
+
+    Both are needed by real calendars: a days-off entry is distinguished by its
+    summary ("Workday"), while Google's holiday feed marks the real ones only
+    in the description ("Public holiday" vs "Observance").
+    """
+    if not match:
+        return True
+    needle = match.strip().lower()
+    haystack = " ".join(
+        str(event.get(field) or "") for field in ("summary", "description")
+    ).lower()
+    return needle in haystack
+
+
 async def _calendar_dates(
     hass: HomeAssistant,
     entity_id: str,
     start: datetime.date,
     end: datetime.date,
+    match: str = "",
 ) -> set[datetime.date]:
     """Every date covered by any event on a calendar, over [start, end].
 
@@ -115,6 +138,8 @@ async def _calendar_dates(
     events = (response or {}).get(entity_id, {}).get("events", [])
     covered: set[datetime.date] = set()
     for event in events:
+        if not _event_matches(event, match):
+            continue
         lo = _as_date(event.get("start"))
         hi = _as_date(event.get("end"))
         if lo is None:
@@ -151,18 +176,27 @@ def _as_date(value) -> datetime.date | None:
 class DaySet:
     """One named set of dates.
 
-    Precedence is `include` > `exclude` > weekday mask. That is not invented:
-    it mirrors the workday template helper this replaces, where a days-off entry
-    titled "Workday" reinstates a workday.
+    Precedence is **force > veto > base**. That is not invented: it mirrors the
+    workday template helper this replaces, where a days-off entry titled
+    "Workday" reinstates a workday, any other days-off entry cancels one, and
+    the Workday integration decides the rest.
+
+    Two tiers were not enough. The earlier model called the base tier
+    `include`, which outranked `exclude` — so a workday calendar as `include`
+    could never be vetoed by days-off, and PTO was silently ignored.
     """
 
     id: str
     name: str
     weekdays: list[str] = field(default_factory=list)
-    include_calendars: list[str] = field(default_factory=list)
+    base_calendars: list[str] = field(default_factory=list)
+    base_dates: str = ""
+    force_calendars: list[str] = field(default_factory=list)
+    force_dates: str = ""
+    force_match: str = ""
     exclude_calendars: list[str] = field(default_factory=list)
-    include_dates: str = ""
     exclude_dates: str = ""
+    exclude_match: str = ""
     invert: bool = False
 
     _eligible: set[datetime.date] = field(default_factory=set, repr=False)
@@ -172,21 +206,37 @@ class DaySet:
 
     @classmethod
     def from_config(cls, config: dict) -> DaySet:
+        # MIGRATION: `include_*` used to mean the base tier, and every day-set
+        # written under the old model meant it that way. Read it as base.
+        base_calendars = list(
+            config.get(CONF_BASE_CALENDARS)
+            or config.get(CONF_INCLUDE_CALENDARS)
+            or []
+        )
+        base_dates = (
+            config.get(CONF_BASE_DATES)
+            or config.get(CONF_INCLUDE_DATES)
+            or ""
+        )
         return cls(
             id=config[CONF_ID],
             name=config[CONF_NAME],
             weekdays=list(config.get(CONF_WEEKDAYS) or []),
-            include_calendars=list(config.get(CONF_INCLUDE_CALENDARS) or []),
+            base_calendars=base_calendars,
+            base_dates=base_dates,
+            force_calendars=list(config.get(CONF_FORCE_CALENDARS) or []),
+            force_dates=config.get(CONF_FORCE_DATES) or "",
+            force_match=config.get(CONF_FORCE_MATCH) or "",
             exclude_calendars=list(config.get(CONF_EXCLUDE_CALENDARS) or []),
-            include_dates=config.get(CONF_INCLUDE_DATES) or "",
             exclude_dates=config.get(CONF_EXCLUDE_DATES) or "",
+            exclude_match=config.get(CONF_EXCLUDE_MATCH) or "",
             invert=bool(config.get(CONF_INVERT)),
         )
 
     @property
     def source_entities(self) -> list[str]:
         """Calendars this day-set reads, so we can re-evaluate when they change."""
-        return [*self.include_calendars, *self.exclude_calendars]
+        return [*self.base_calendars, *self.force_calendars, *self.exclude_calendars]
 
     async def async_refresh(
         self, hass: HomeAssistant, start: datetime.date, days: int = HORIZON_DAYS
@@ -194,18 +244,19 @@ class DaySet:
         """Recompute eligibility across the whole window."""
         end = start + datetime.timedelta(days=days)
 
-        included: set[datetime.date] = set()
-        for entity_id in self.include_calendars:
-            included |= await _calendar_dates(hass, entity_id, start, end)
-        included |= _dates_in_ranges(
-            parse_date_spec(self.include_dates), start, end
-        )
+        async def collect(entities, dates_spec, match=""):
+            out: set[datetime.date] = set()
+            for entity_id in entities:
+                out |= await _calendar_dates(hass, entity_id, start, end, match)
+            out |= _dates_in_ranges(parse_date_spec(dates_spec), start, end)
+            return out
 
-        excluded: set[datetime.date] = set()
-        for entity_id in self.exclude_calendars:
-            excluded |= await _calendar_dates(hass, entity_id, start, end)
-        excluded |= _dates_in_ranges(
-            parse_date_spec(self.exclude_dates), start, end
+        base = await collect(self.base_calendars, self.base_dates)
+        forced = await collect(
+            self.force_calendars, self.force_dates, self.force_match
+        )
+        vetoed = await collect(
+            self.exclude_calendars, self.exclude_dates, self.exclude_match
         )
 
         mask = {WEEKDAYS.index(d) for d in self.weekdays if d in WEEKDAYS}
@@ -213,10 +264,12 @@ class DaySet:
         eligible: set[datetime.date] = set()
         cur = start
         while cur <= end:
-            if cur in included:
-                hit = True  # force-include wins outright
-            elif mask and cur.weekday() in mask and cur not in excluded:
-                hit = True
+            if cur in forced:
+                hit = True                       # force wins outright
+            elif cur in vetoed:
+                hit = False                      # veto beats the base tier
+            elif cur in base or (mask and cur.weekday() in mask):
+                hit = True                       # base: calendars and/or mask
             else:
                 hit = False
             if hit != self.invert:
