@@ -60,6 +60,11 @@ CONF_DAY_SET = "day_set"
 CONF_PATTERN = "pattern"
 CONF_ENABLED = "enabled"
 CONF_ACTIONS = "actions"
+# A schedule is a day-set plus one or more STEPS. A step pairs a time pattern
+# with the actions to run at it, so "irrigation on at 06:00, off at 07:00" is
+# one schedule — and its day-set is stated once, where it cannot drift.
+CONF_STEPS = "steps"
+CONF_STEP_ID = "step_id"
 
 PATTERN_OCCURRENCES = "occurrences"
 PATTERN_INTERVAL = "interval"

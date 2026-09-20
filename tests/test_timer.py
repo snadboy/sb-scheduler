@@ -116,29 +116,29 @@ wake = {"name": "Wake", "pattern": {"type": "occurrences", "occurrences": ["06:3
 
 check(
     "before the time today -> today",
-    timer.next_trigger(wake, weekdays, dt("2026-09-21T05:00:00")),
+    timer.next_trigger(wake["pattern"], weekdays, dt("2026-09-21T05:00:00")),
     dt("2026-09-21T06:30:00"),
 )
 check(
     "after the time today -> next eligible day",
-    timer.next_trigger(wake, weekdays, dt("2026-09-21T07:00:00")),
+    timer.next_trigger(wake["pattern"], weekdays, dt("2026-09-21T07:00:00")),
     dt("2026-09-22T06:30:00"),
 )
 check(
     "on a non-eligible day -> next eligible day",
-    timer.next_trigger(wake, weekdays, dt("2026-09-20T05:00:00")),
+    timer.next_trigger(wake["pattern"], weekdays, dt("2026-09-20T05:00:00")),
     dt("2026-09-21T06:30:00"),
 )
 check(
     "exactly at the trigger time -> next one (strictly after now)",
-    timer.next_trigger(wake, weekdays, dt("2026-09-21T06:30:00")),
+    timer.next_trigger(wake["pattern"], weekdays, dt("2026-09-21T06:30:00")),
     dt("2026-09-22T06:30:00"),
 )
 
 twice = {"name": "Twice", "pattern": {"type": "occurrences", "occurrences": ["06:30", "18:00"]}}
 check(
     "picks the later slot the same day",
-    timer.next_trigger(twice, weekdays, dt("2026-09-21T07:00:00")),
+    timer.next_trigger(twice["pattern"], weekdays, dt("2026-09-21T07:00:00")),
     dt("2026-09-21T18:00:00"),
 )
 
@@ -146,13 +146,13 @@ check(
 school = FakeDaySet([D("2027-06-03"), D("2027-08-18"), D("2027-08-19")])
 check(
     "clears a 10-week gap",
-    timer.next_trigger(wake, school, dt("2027-06-03T09:00:00")),
+    timer.next_trigger(wake["pattern"], school, dt("2027-06-03T09:00:00")),
     dt("2027-08-18T06:30:00"),
 )
 
 check(
     "past the day-set horizon returns None rather than a wrong time",
-    timer.next_trigger(wake, FakeDaySet([]), dt("2026-09-21T05:00:00")),
+    timer.next_trigger(wake["pattern"], FakeDaySet([]), dt("2026-09-21T05:00:00")),
     None,
 )
 check(
@@ -166,7 +166,7 @@ check(
 # Timezone-aware now must produce a timezone-aware trigger, or comparisons
 # against HA's clock raise TypeError at runtime.
 aware = datetime.datetime(2026, 9, 21, 5, 0, tzinfo=datetime.timezone.utc)
-result = timer.next_trigger(wake, weekdays, aware)
+result = timer.next_trigger(wake["pattern"], weekdays, aware)
 check("tz-aware now -> tz-aware result", result.tzinfo, datetime.timezone.utc)
 
 interval_sched = {
@@ -175,12 +175,12 @@ interval_sched = {
 }
 check(
     "interval mid-window picks the next step",
-    timer.next_trigger(interval_sched, weekdays, dt("2026-09-21T09:07:00")),
+    timer.next_trigger(interval_sched["pattern"], weekdays, dt("2026-09-21T09:07:00")),
     dt("2026-09-21T09:15:00"),
 )
 check(
     "interval after the window rolls to the next day",
-    timer.next_trigger(interval_sched, weekdays, dt("2026-09-21T13:30:00")),
+    timer.next_trigger(interval_sched["pattern"], weekdays, dt("2026-09-21T13:30:00")),
     dt("2026-09-22T09:00:00"),
 )
 
@@ -207,10 +207,10 @@ check("and moves with the date",
 
 garden_on = {"name": "Garden lights on", "pattern": sun_pattern}
 check("next trigger uses that day's sunset",
-      timer.next_trigger(garden_on, weekdays, dt("2026-09-21T12:00:00"), fake_sun),
+      timer.next_trigger(garden_on["pattern"], weekdays, dt("2026-09-21T12:00:00"), fake_sun),
       dt("2026-09-21T19:15:00"))
 check("after sunset rolls to the next eligible day's sunset",
-      timer.next_trigger(garden_on, weekdays, dt("2026-09-21T20:00:00"), fake_sun),
+      timer.next_trigger(garden_on["pattern"], weekdays, dt("2026-09-21T20:00:00"), fake_sun),
       dt("2026-09-22T19:16:00"))
 
 # Mixed fixed + sun must sort by resolved time, not by config order.
@@ -248,7 +248,7 @@ check("all results end up aware", all(m.tzinfo is not None for m in got), True)
 check("midnight sorts first", got[0].hour, 0)
 check(
     "next_trigger survives the mixed pattern",
-    timer.next_trigger({"name": "Garden", "pattern": mixed_tz}, weekdays,
+    timer.next_trigger(mixed_tz, weekdays,
                        datetime.datetime(2026, 9, 21, 12, 0, tzinfo=TZ), aware_sun),
     datetime.datetime(2026, 9, 21, 19, 15, tzinfo=TZ),
 )

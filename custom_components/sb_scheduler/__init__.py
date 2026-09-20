@@ -26,6 +26,7 @@ from .const import (
     CONF_ENABLED,
     CONF_PATTERN,
     CONF_SCHEDULE_ID,
+    CONF_STEPS,
     DOMAIN,
     SIGNAL_SCHEDULES_UPDATED,
 )
@@ -50,6 +51,9 @@ SCHEDULE_SCHEMA = vol.Schema(
     {
         vol.Optional("name"): cv.string,
         vol.Optional(CONF_DAY_SET): cv.string,
+        # Either steps, or a legacy single pattern+actions which is migrated
+        # into one implicit step by the store.
+        vol.Optional(CONF_STEPS): list,
         vol.Optional(CONF_PATTERN): dict,
         vol.Optional(CONF_ACTIONS): list,
         vol.Optional("conditions"): list,

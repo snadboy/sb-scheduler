@@ -23,6 +23,8 @@ from .const import (
     CONF_PATTERN,
     CONF_SCHEDULE_ID,
     CONF_START,
+    CONF_STEP_ID,
+    CONF_STEPS,
     CONF_STOP,
     DOMAIN,
     PATTERN_INTERVAL,
@@ -53,37 +55,78 @@ def normalise_action(action: dict) -> dict:
     return out
 
 
-def normalise_schedule(data: dict) -> dict:
-    """Fill in defaults so the rest of the code can stop checking."""
-    pattern = dict(data.get(CONF_PATTERN) or {})
-    kind = pattern.get("type") or PATTERN_OCCURRENCES
-
-    if kind == PATTERN_INTERVAL:
-        pattern = {
+def normalise_pattern(pattern: dict | None) -> dict:
+    """One canonical shape for a time pattern."""
+    pattern = dict(pattern or {})
+    if (pattern.get("type") or PATTERN_OCCURRENCES) == PATTERN_INTERVAL:
+        return {
             "type": PATTERN_INTERVAL,
             CONF_START: pattern.get(CONF_START, "00:00"),
             CONF_STOP: pattern.get(CONF_STOP, "23:59"),
             CONF_EVERY_MINUTES: int(pattern.get(CONF_EVERY_MINUTES, 60)),
         }
-    else:
-        occurrences = pattern.get(CONF_OCCURRENCES) or []
-        pattern = {
-            "type": PATTERN_OCCURRENCES,
-            CONF_OCCURRENCES: [str(t) for t in occurrences],
-        }
+    return {
+        "type": PATTERN_OCCURRENCES,
+        CONF_OCCURRENCES: [str(t) for t in (pattern.get(CONF_OCCURRENCES) or [])],
+    }
+
+
+def normalise_step(data: dict, index: int) -> dict:
+    """A step = a time pattern + the actions to run at it."""
+    data = dict(data or {})
+    return {
+        CONF_STEP_ID: data.get(CONF_STEP_ID) or f"s{index + 1}",
+        "name": data.get("name") or f"Step {index + 1}",
+        CONF_ENABLED: bool(data.get(CONF_ENABLED, True)),
+        CONF_PATTERN: normalise_pattern(data.get(CONF_PATTERN)),
+        CONF_ACTIONS: [normalise_action(a) for a in (data.get(CONF_ACTIONS) or [])],
+        "conditions": list(data.get("conditions") or []),
+        "condition_type": data.get("condition_type") or "and",
+        "track_conditions": bool(data.get("track_conditions", False)),
+        ATTR_LAST_TRIGGERED: data.get(ATTR_LAST_TRIGGERED),
+    }
+
+
+def merge_steps(current: list[dict], incoming: list[dict]) -> list[dict]:
+    """Overlay each incoming step onto the stored step with the same id.
+
+    An edit that sends only what it changed must not erase what it did not
+    mention. The card edits a step's name and pattern and knows nothing about
+    `actions`, so a plain list replacement would silently empty them -- and,
+    like the `service_data` landmine, the damage would only show at FIRE time.
+
+    The resulting list is exactly `incoming`, so omitting a step still deletes
+    it and an unrecognised id still adds one. Only the CONTENT is merged.
+    """
+    by_id = {s[CONF_STEP_ID]: s for s in current if s.get(CONF_STEP_ID)}
+    return [{**by_id.get(step.get(CONF_STEP_ID), {}), **step} for step in incoming]
+
+
+def normalise_schedule(data: dict) -> dict:
+    """Fill in defaults so the rest of the code can stop checking."""
+    steps = data.get(CONF_STEPS)
+    if not steps:
+        # MIGRATION: a pre-steps schedule is one implicit step built from its
+        # top-level pattern/actions. Nothing on disk needs rewriting.
+        steps = [{
+            "name": data.get("name") or "Run",
+            CONF_PATTERN: data.get(CONF_PATTERN),
+            CONF_ACTIONS: data.get(CONF_ACTIONS),
+            "conditions": data.get("conditions"),
+            "condition_type": data.get("condition_type"),
+            "track_conditions": data.get("track_conditions"),
+            ATTR_LAST_TRIGGERED: data.get(ATTR_LAST_TRIGGERED),
+        }]
 
     return {
         CONF_SCHEDULE_ID: data.get(CONF_SCHEDULE_ID) or secrets.token_hex(3),
         "name": data.get("name") or "Schedule",
         CONF_ENABLED: bool(data.get(CONF_ENABLED, True)),
         CONF_DAY_SET: data.get(CONF_DAY_SET) or "daily",
-        CONF_PATTERN: pattern,
-        CONF_ACTIONS: [normalise_action(a) for a in (data.get(CONF_ACTIONS) or [])],
-        # Carried through every edit: an edit must not erase the run history.
+        CONF_STEPS: [normalise_step(s, i) for i, s in enumerate(steps)],
+        # Rollup across steps. Carried through every edit: an edit must not
+        # erase the run history.
         ATTR_LAST_TRIGGERED: data.get(ATTR_LAST_TRIGGERED),
-        "conditions": list(data.get("conditions") or []),
-        "condition_type": data.get("condition_type") or "and",
-        "track_conditions": bool(data.get("track_conditions", False)),
     }
 
 
@@ -121,10 +164,27 @@ class ScheduleStore:
         current = self.schedules.get(schedule_id)
         if current is None:
             return None
+        changes = dict(changes)
+        if CONF_STEPS in changes:
+            changes[CONF_STEPS] = merge_steps(
+                current.get(CONF_STEPS, []), changes[CONF_STEPS]
+            )
         merged = normalise_schedule({**current, **changes, CONF_SCHEDULE_ID: schedule_id})
         self.schedules[schedule_id] = merged
         self._save()
         return merged
+
+    @callback
+    def async_record_step_trigger(self, schedule_id: str, step_id: str, when: str) -> None:
+        """Stamp one step, and the schedule rollup, as having just fired."""
+        schedule = self.schedules.get(schedule_id)
+        if schedule is None:
+            return
+        for step in schedule.get(CONF_STEPS, []):
+            if step[CONF_STEP_ID] == step_id:
+                step[ATTR_LAST_TRIGGERED] = when
+        schedule[ATTR_LAST_TRIGGERED] = when
+        self._save()
 
     @callback
     def async_record_trigger(self, schedule_id: str, when: str) -> None:

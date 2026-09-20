@@ -13,7 +13,23 @@ attribution chain stays intact. **No upstream merge path is planned.**
 | Domain | `sb_scheduler` (NOT `scheduler` — see below) |
 | License | GPL-3.0, inherited and permanent |
 | `fork` remote | github.com/snadboy/sb-scheduler-component — the frozen predecessor |
-| Status | **Phases 0, 1 and 2 (edit-only card) done and verified live.** |
+| Status | **Phases 0, 1 and 2 (edit-only card) done and verified live. Steps model landed 2026-09-20.** |
+
+## Steps (2026-09-20)
+
+A schedule holds **one or more steps**, each a pattern + its own actions — see
+DESIGN.md. Garden Lights is now ONE schedule with an On and an Off step; the
+five schedules became four.
+
+- **`async_update` merges steps by `step_id`** (`merge_steps`). The card sends
+  only `{step_id, name, enabled, pattern}`; without the merge, `actions` would
+  be silently emptied and it would only show when the schedule fired.
+- **A step toggle must send every step_id**, because the resulting list is
+  exactly what was passed — omitting a step deletes it. The card's
+  `_toggleStep` maps over all of them for this reason.
+- `run_now` takes an optional `step_id`; without one it runs every step.
+- `next_trigger(pattern, day_set, now, sun_resolver, label)` takes a PATTERN
+  now, not a schedule, with `label` only for logging.
 
 ## Where things are
 

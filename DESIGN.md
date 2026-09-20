@@ -51,27 +51,61 @@ is inherited and already hardened (see the fork's loud-failure work).
 
 ## Schedule model
 
-Two XOR choices. Symmetry is deliberate: it makes the card two radio groups.
+A schedule picks **one day-set** and holds **one or more steps**. A step is a
+time pattern plus the actions to run at it. Two XOR choices per step; the
+symmetry is deliberate, because it makes the card two radio groups.
 
 ```yaml
 schedule:
   day_set: workday            # exactly one — see below
-  pattern:                    # exactly one of:
-    occurrences: ["06:30", "18:00"]     # one or more times of day
-    # — or —
-    interval:                           # fire at start, then every N until stop
-      start: "09:00"
-      stop:  "13:00"
-      every_minutes: 15
-  actions: [...]              # unchanged from upstream
-  conditions: [...]           # unchanged from upstream
+  steps:
+    - name: On                # what this step does, in the user's words
+      enabled: true
+      pattern:                # exactly one of:
+        occurrences: ["06:30", "18:00"]   # one or more times of day
+        # — or —
+        interval:                         # fire at start, then every N until stop
+          start: "09:00"
+          stop:  "13:00"
+          every_minutes: 15
+      actions: [...]          # unchanged from upstream
+      conditions: [...]       # unchanged from upstream
+    - name: Off
+      pattern: { occurrences: ["sunrise+00:15:00"] }
+      actions: [...]
 ```
 
-**Both patterns are start-only.** "Every 15 min from 09:00 until 13:00" fires
-17 times and emits no stop action; occurrences are points in time, not ranges.
-That is the spec as stated — ranged behaviour (irrigation's "on at 06:00, off at
-07:00") was my addition inherited from upstream's timeslots, and is NOT built.
-If it is wanted, it is a second action list at a stop time, not a duration.
+### Why steps: the schedule leads with the ACTION, not the time
+
+The first cut had one pattern and one action list per schedule, which forced
+"turn the garden lights on at sunset and off at sunrise" into **two schedules**
+that a reader has to mentally re-join, and left irrigation unable to express its
+own off at all. Leading with the action inverts it: *what happens*, then *when*.
+One schedule, two steps, one day-set, one name.
+
+Each step arms independently — `_rearm` computes every enabled step's next
+trigger and arms for the earliest, recording which steps share that moment so
+several can fire together. `last_triggered` is per step as well as rolled up,
+because "did the off step run?" is a different question from "did the schedule
+run?".
+
+**Every pattern is still start-only.** "Every 15 min from 09:00 until 13:00"
+fires 17 times and emits no stop action; occurrences are points in time, not
+ranges. A stop is a second *step*, which is exactly what steps are for — never a
+duration hanging off the start.
+
+Pre-steps schedules migrate on load into one implicit step built from their
+top-level `pattern`/`actions`, so nothing on disk needs rewriting and no history
+is lost.
+
+### An edit must not erase what it did not mention
+
+`async_update` merges an incoming step onto the stored one **by `step_id`**
+(`merge_steps`). The card edits a step's name and pattern and knows nothing
+about `actions`; a plain list replacement would silently empty them, and — like
+the `service_data` landmine — the damage would only surface at FIRE time. The
+resulting list is still exactly what was passed, so omitting a step deletes it
+and an unknown id inserts one; only the content is merged.
 
 `specific_days` is one of the day-set options and reveals the seven weekday
 checkboxes, so nothing the old model could express is lost.

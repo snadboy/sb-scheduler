@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import logging
 
+import voluptuous as vol
+
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_point_in_time
@@ -23,6 +26,8 @@ from .const import (
     CONF_ENABLED,
     CONF_PATTERN,
     CONF_SCHEDULE_ID,
+    CONF_STEP_ID,
+    CONF_STEPS,
     DOMAIN,
     SIGNAL_DAY_SETS_UPDATED,
     SIGNAL_SCHEDULES_UPDATED,
@@ -58,7 +63,7 @@ async def async_setup_entry(
     # Fire a schedule's actions now, ignoring its day-set. The obvious way to
     # test a schedule without waiting for its next eligible date.
     entity_platform.async_get_current_platform().async_register_entity_service(
-        "run_now", {}, "async_run_now"
+        "run_now", {vol.Optional("step_id"): cv.string}, "async_run_now"
     )
 
 
@@ -75,7 +80,11 @@ class ScheduleEntity(SwitchEntity):
         self._attr_unique_id = f"{entry.entry_id}_schedule_{schedule_id}"
         self._timer_unsub = None
         self._next: object | None = None
-        self._handler: ActionHandler | None = None
+        self._next_steps: list[str] = []
+        self._step_next: dict[str, str] = {}
+        # One handler PER STEP: an unavailable target for "off" must not cancel
+        # the queue that "on" is waiting in.
+        self._handlers: dict[str, ActionHandler] = {}
 
     # --- plumbing ----------------------------------------------------------
     @property
@@ -97,35 +106,41 @@ class ScheduleEntity(SwitchEntity):
     @property
     def extra_state_attributes(self) -> dict:
         schedule = self.schedule
-        pattern = schedule.get(CONF_PATTERN) or {}
+        today = dt_util.now().date()
+        steps = []
+        for step in schedule.get(CONF_STEPS, []):
+            pattern = step.get(CONF_PATTERN) or {}
+            steps.append({
+                CONF_STEP_ID: step[CONF_STEP_ID],
+                "name": step.get("name"),
+                CONF_ENABLED: step.get(CONF_ENABLED, True),
+                # The RAW pattern is what an editor must round-trip; `times`
+                # is the resolution for today, and editing that would lose an
+                # interval or a sun-relative occurrence.
+                CONF_PATTERN: pattern,
+                "times": [
+                    t.strftime("%H:%M")
+                    for t in times_on(pattern, today, self._sun)
+                ],
+                # Which sun event (if any) each time tracks. The card cannot
+                # zip `times` against the stored pattern — resolution sorts by
+                # clock time and reorders them.
+                "times_detail": describe_times(pattern, today, self._sun),
+                CONF_ACTIONS: step.get(CONF_ACTIONS, []),
+                ATTR_NEXT_TRIGGER: self._step_next.get(step[CONF_STEP_ID]),
+                ATTR_LAST_TRIGGERED: step.get(ATTR_LAST_TRIGGERED),
+            })
         return {
             CONF_SCHEDULE_ID: self.schedule_id,
             CONF_DAY_SET: schedule.get(CONF_DAY_SET),
-            "pattern_type": pattern.get("type"),
-            # The RAW pattern, so an editor can round-trip an interval's
-            # start/stop/every_minutes. `times` below is the expansion, which
-            # is display-only — editing that would lose the interval.
-            CONF_PATTERN: pattern,
-            # Clock times for display. The RAW pattern above is what an editor
-            # must round-trip: these are resolved for today, so a sun-relative
-            # occurrence shows as a concrete time and would lose its meaning.
-            "times": [
-                t.strftime("%H:%M")
-                for t in times_on(pattern, dt_util.now().date(), self._sun)
-            ],
-            # Same times, plus which sun event (if any) each one tracks. The
-            # card cannot derive this by zipping against the stored pattern,
-            # because resolution sorts by clock time.
-            "times_detail": describe_times(
-                pattern, dt_util.now().date(), self._sun
-            ),
+            CONF_STEPS: steps,
+            # Rollup across steps, so the entity still reads at a glance.
             ATTR_NEXT_TRIGGER: self._next.isoformat() if self._next else None,
             ATTR_LAST_TRIGGERED: schedule.get(ATTR_LAST_TRIGGERED),
-            CONF_ACTIONS: schedule.get(CONF_ACTIONS, []),
         }
 
     async def async_added_to_hass(self) -> None:
-        self._handler = ActionHandler(self.hass, self.schedule_id)
+        self._sync_handlers()
         # A day-set change can move every trigger that depends on it.
         self.async_on_remove(
             async_dispatcher_connect(
@@ -141,8 +156,18 @@ class ScheduleEntity(SwitchEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         self._cancel()
-        if self._handler:
-            await self._handler.async_empty_queue()
+        for handler in self._handlers.values():
+            await handler.async_empty_queue()
+        self._handlers.clear()
+
+    def _sync_handlers(self) -> None:
+        """One ActionHandler per step, created lazily and keyed by step id."""
+        for step in self.schedule.get(CONF_STEPS, []):
+            sid = step[CONF_STEP_ID]
+            if sid not in self._handlers:
+                self._handlers[sid] = ActionHandler(
+                    self.hass, f"{self.schedule_id}:{sid}"
+                )
 
     @callback
     def _handle_day_sets_updated(self) -> None:
@@ -185,12 +210,15 @@ class ScheduleEntity(SwitchEntity):
 
     @callback
     def _rearm(self) -> None:
-        """Recompute the next trigger and arm a timer for it."""
+        """Recompute every step's next trigger and arm for the earliest."""
         self._cancel()
         self._next = None
+        self._next_steps = []
+        self._step_next = {}
 
         schedule = self.schedule
         if schedule and self.is_on:
+            self._sync_handlers()
             day_set = self._data.day_sets.get(schedule.get(CONF_DAY_SET))
             if day_set is None:
                 # Loud, because the alternative is a schedule that looks armed
@@ -201,44 +229,76 @@ class ScheduleEntity(SwitchEntity):
                     schedule.get(CONF_DAY_SET),
                 )
             else:
-                self._next = next_trigger(
-                    schedule, day_set, dt_util.now(), self._sun
-                )
-                if self._next:
+                now = dt_util.now()
+                soonest = None
+                for step in schedule.get(CONF_STEPS, []):
+                    if not step.get(CONF_ENABLED, True):
+                        continue
+                    when = next_trigger(
+                        step.get(CONF_PATTERN), day_set, now, self._sun,
+                        label=f"{schedule.get('name')} / {step.get('name')}",
+                    )
+                    if when is None:
+                        continue
+                    self._step_next[step[CONF_STEP_ID]] = when.isoformat()
+                    if soonest is None or when < soonest:
+                        soonest = when
+                # Several steps can share a moment; fire all of them.
+                if soonest is not None:
+                    self._next = soonest
+                    self._next_steps = [
+                        s[CONF_STEP_ID] for s in schedule.get(CONF_STEPS, [])
+                        if self._step_next.get(s[CONF_STEP_ID]) == soonest.isoformat()
+                    ]
                     self._timer_unsub = async_track_point_in_time(
-                        self.hass, self._handle_trigger, self._next
+                        self.hass, self._handle_trigger, soonest
                     )
                     _LOGGER.debug(
-                        "Schedule '%s' armed for %s", schedule.get("name"), self._next
+                        "Schedule '%s' armed for %s (steps: %s)",
+                        schedule.get("name"), soonest, self._next_steps,
                     )
 
         if self.hass is not None:
             self.async_write_ha_state()
 
     async def _handle_trigger(self, _now) -> None:
-        """Fire, then arm the following occurrence."""
+        """Fire whichever steps are due, then arm the next."""
         self._timer_unsub = None
-        schedule = self.schedule
-        _LOGGER.debug("Schedule '%s' triggered", schedule.get("name"))
-
-        # Record the firing, not the outcome: actions retry asynchronously when
-        # a target is unavailable, so "it ran" and "it succeeded" are different
-        # questions. Failures are reported separately by the action queue.
-        self._data.schedules.async_record_trigger(
-            self.schedule_id, dt_util.now().isoformat()
-        )
-
-        if self._handler is not None:
-            await self._handler.async_queue_actions(
-                {
-                    "conditions": schedule.get("conditions", []),
-                    "actions": schedule.get(CONF_ACTIONS, []),
-                    "condition_type": schedule.get("condition_type", "and"),
-                    "track_conditions": schedule.get("track_conditions", False),
-                }
-            )
+        due = list(self._next_steps)
+        await self._run_steps(due)
         self._rearm()
 
-    async def async_run_now(self) -> None:
-        """Execute the actions immediately, ignoring the day-set."""
-        await self._handle_trigger(None)
+    async def _run_steps(self, step_ids: list[str]) -> None:
+        schedule = self.schedule
+        now = dt_util.now().isoformat()
+        for step in schedule.get(CONF_STEPS, []):
+            if step[CONF_STEP_ID] not in step_ids:
+                continue
+            _LOGGER.debug(
+                "Schedule '%s' step '%s' triggered",
+                schedule.get("name"), step.get("name"),
+            )
+            # Record the firing, not the outcome: actions retry asynchronously
+            # when a target is unavailable, so "it ran" and "it succeeded" are
+            # different questions. Failures are reported by the action queue.
+            self._data.schedules.async_record_step_trigger(
+                self.schedule_id, step[CONF_STEP_ID], now
+            )
+            handler = self._handlers.get(step[CONF_STEP_ID])
+            if handler is not None:
+                await handler.async_queue_actions({
+                    "conditions": step.get("conditions", []),
+                    "actions": step.get(CONF_ACTIONS, []),
+                    "condition_type": step.get("condition_type", "and"),
+                    "track_conditions": step.get("track_conditions", False),
+                })
+
+    async def async_run_now(self, step_id: str | None = None) -> None:
+        """Run a step now, ignoring the day-set. Default: every enabled step."""
+        self._sync_handlers()
+        ids = [
+            s[CONF_STEP_ID] for s in self.schedule.get(CONF_STEPS, [])
+            if (step_id is None and s.get(CONF_ENABLED, True)) or s[CONF_STEP_ID] == step_id
+        ]
+        await self._run_steps(ids)
+        self._rearm()

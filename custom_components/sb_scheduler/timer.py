@@ -220,19 +220,19 @@ def describe_times(
 
 
 def next_trigger(
-    schedule: dict, day_set, now: datetime.datetime, sun_resolver=None
+    pattern: dict, day_set, now: datetime.datetime, sun_resolver=None, label: str = ""
 ) -> datetime.datetime | None:
-    """The next time this schedule should fire, strictly after `now`.
+    """The next time this PATTERN should fire, strictly after `now`.
+
+    Takes a pattern rather than a whole schedule, because a schedule now has
+    one pattern per step and the caller picks the earliest across them.
 
     `day_set` is anything exposing next_date_on_or_after(date) -> date | None.
     `sun_resolver(event, date) -> datetime | None` supplies sunrise/sunset.
     """
-    pattern = schedule.get(CONF_PATTERN) or {}
+    pattern = pattern or {}
     if not occurrences(pattern):
-        _LOGGER.warning(
-            "Schedule '%s' has no usable times; it will never fire",
-            schedule.get("name"),
-        )
+        _LOGGER.warning("'%s' has no usable times; it will never fire", label)
         return None
 
     day = now.date()
@@ -248,8 +248,6 @@ def next_trigger(
         day = eligible + datetime.timedelta(days=1)
 
     _LOGGER.error(
-        "Schedule '%s' found no trigger within %d eligible days",
-        schedule.get("name"),
-        MAX_DAYS_EXAMINED,
+        "'%s' found no trigger within %d eligible days", label, MAX_DAYS_EXAMINED
     )
     return None
