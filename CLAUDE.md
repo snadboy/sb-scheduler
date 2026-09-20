@@ -189,7 +189,8 @@ Failures are reported separately by the action queue's loud-failure path.
   The draft is local state, never read back from hass.
 - **A resolved time hides its source.** "6:50" says nothing about tracking
   sunrise, so the backend also exposes `times_detail` ({time, event,
-  offset_minutes}) and the card renders `6:50 (15m after sunrise)`. The card
+  offset_minutes}) and the card renders `6:50 (after sunrise)`. The magnitude
+  is deliberately omitted — the resolved clock time already says when it fires. The card
   cannot derive this by zipping `times` against the stored occurrences, because
   resolution sorts by clock time and reorders them — hence `_resolved()` pairing
   each moment with its occurrence.

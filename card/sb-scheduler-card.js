@@ -1,4 +1,4 @@
-/* SB Scheduler Card — v0.5.0 (edit-only)
+/* SB Scheduler Card — v0.5.1 (edit-only)
  *
  * Edits existing sb_scheduler schedules: name, day-set, and time pattern.
  * Creating schedules and editing actions are deliberately out of v1 — they are
@@ -9,7 +9,7 @@
  */
 
 const CARD = "sb-scheduler-card";
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 
 // "sunset", "sunset+00:15:00", "sunrise-01:30" — must survive a round-trip
 // through the editor, which is why these get a text field and not <input type=time>.
@@ -19,17 +19,15 @@ const isSun = (v) => SUN.test(String(v ?? "").trim());
 // "06:50" -> "6:50"; a schedule time is read, not sorted, so drop the pad.
 const hhmm = (t) => String(t ?? "").replace(/^0/, "");
 
-// "6:50 (15m after sunrise)" — a resolved clock time alone hides the fact that
-// it tracks the sun and will be different tomorrow.
+// "6:50 (after sunrise)" — a resolved clock time alone hides the fact that it
+// tracks the sun and will be different tomorrow. The offset magnitude is
+// deliberately not shown; the resolved time already says when it fires.
 const describeTime = (d) => {
   const clock = hhmm(d.time);
   if (!d.event) return clock;
   const mins = Number(d.offset_minutes || 0);
-  if (!mins) return `${clock} (at ${d.event})`;
-  const when = mins > 0 ? "after" : "before";
-  const n = Math.abs(mins);
-  const amount = n % 60 === 0 ? `${n / 60}h` : n > 60 ? `${Math.floor(n / 60)}h${n % 60}m` : `${n}m`;
-  return `${clock} (${amount} ${when} ${d.event})`;
+  const when = mins === 0 ? "at" : mins > 0 ? "after" : "before";
+  return `${clock} (${when} ${d.event})`;
 };
 
 const esc = (s) =>
