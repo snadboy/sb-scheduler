@@ -137,9 +137,17 @@ websocket command `calendar/event/delete` with `entity_id` + `uid`. Probe it
 with a bogus uid before creating anything, so you know you can clean up.
 (`UID` is a readonly bash variable; name the shell var something else.)
 
-`snadboy/ha-workdays-card` — the editor for `calendar.days_off` — is installed
-and live behind a Bubble pop-up (`#workdays`) on the Home view. Do not remove
-it.
+`snadboy/ha-workdays-card` was **removed 2026-09-20**. It lived inside the
+`#workdays` Bubble pop-up on the Home view; that pop-up now holds a native
+`calendar` card for `calendar.days_off` + the workday calendar, plus a note
+that entries are added in HA's Calendar panel. The "Workdays" button and the
+pop-up itself are unchanged. Backup:
+`/config/backups_workdayscard_20260920_071541/`.
+
+**`.storage` files lag the live state.** Right after removing the repo, the
+on-disk `lovelace_resources` still listed the card — HA writes storage lazily.
+The live API already showed it gone. Check the API before concluding a cleanup
+failed.
 
 ## Recreating the real schedules
 
