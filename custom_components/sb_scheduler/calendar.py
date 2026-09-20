@@ -71,6 +71,7 @@ class DaySetCalendar(CalendarEntity):
             "exclude_calendars": self._day_set.exclude_calendars,
             "force_calendars": self._day_set.force_calendars,
             "inverted": self._day_set.invert,
+            "offset_days": self._day_set.offset_days,
         }
 
     @property

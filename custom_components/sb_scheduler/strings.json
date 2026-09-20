@@ -39,7 +39,8 @@
           "force_calendars": "Always included by these calendars",
           "force_dates": "\u2026and these dates",
           "force_match": "Only force when the entry matches",
-          "invert": "Invert (every date NOT in this set)"
+          "invert": "Invert (every date NOT in this set)",
+          "offset_days": "Shift by (days)"
         },
         "data_description": {
           "weekdays": "The base tier, together with the calendars below. Leave empty if the day-set comes entirely from a calendar, such as Trash Day.",
@@ -49,7 +50,8 @@
           "exclude_match": "Optional text matched against an event's title or description, so only some entries cancel. Leave empty to cancel on any entry.",
           "force_calendars": "These win over everything, including the cancellations above.",
           "force_match": "Optional text matched against an event's title or description \u2014 e.g. \"Workday\" so only a days-off entry named that reinstates a workday.",
-          "invert": "Turns Workday into Non-workday without configuring it twice."
+          "invert": "Turns Workday into Non-workday without configuring it twice.",
+          "offset_days": "Moves every date in the set. -1 gives \"the night before\" \u2014 e.g. a Trash Day Eve set for putting the bins out. Applied last, so it is always this set, moved."
         }
       },
       "edit": {
@@ -66,7 +68,8 @@
           "force_calendars": "Always included by these calendars",
           "force_dates": "\u2026and these dates",
           "force_match": "Only force when the entry matches",
-          "invert": "Invert (every date NOT in this set)"
+          "invert": "Invert (every date NOT in this set)",
+          "offset_days": "Shift by (days)"
         },
         "data_description": {
           "weekdays": "The base tier, together with the calendars below. Leave empty if the day-set comes entirely from a calendar, such as Trash Day.",
@@ -76,7 +79,8 @@
           "exclude_match": "Optional text matched against an event's title or description, so only some entries cancel. Leave empty to cancel on any entry.",
           "force_calendars": "These win over everything, including the cancellations above.",
           "force_match": "Optional text matched against an event's title or description \u2014 e.g. \"Workday\" so only a days-off entry named that reinstates a workday.",
-          "invert": "Turns Workday into Non-workday without configuring it twice."
+          "invert": "Turns Workday into Non-workday without configuring it twice.",
+          "offset_days": "Moves every date in the set. -1 gives \"the night before\" \u2014 e.g. a Trash Day Eve set for putting the bins out. Applied last, so it is always this set, moved."
         }
       },
       "pick_edit": {

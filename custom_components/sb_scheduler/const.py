@@ -11,6 +11,11 @@ CONF_ID = "id"
 CONF_NAME = "name"
 CONF_WEEKDAYS = "weekdays"
 CONF_INVERT = "invert"
+# Shifts the whole resolved set by N days: "the night before trash day" is
+# Trash Day with offset_days = -1. Applied LAST, after force/veto/base and
+# after invert, so it is always "that set, moved".
+CONF_OFFSET_DAYS = "offset_days"
+MAX_OFFSET_DAYS = 30
 # Three tiers, because two could not express the real workday rule:
 #   force  — wins outright (a days-off entry titled "Workday" reinstates one)
 #   veto   — cancels an otherwise-eligible day

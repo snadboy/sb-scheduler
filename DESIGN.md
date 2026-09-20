@@ -291,12 +291,27 @@ hand to `calendar.sb_trash_day`). The `sb_` prefix this design originally
 proposed and then dropped would have avoided it. Five existing day-set
 calendars are bare; if the collision recurs, prefix them all.
 
-## Not expressible yet: an offset from a day-set
+## Offsets: `offset_days`
 
-"The night before trash day" cannot be written. A day-set is a set of dates
-with no notion of ±N days, and the schedule's time pattern is a time of day,
-not a date shift. Bin-out reminders are the obvious use. Options: an offset on
-the day-set, or an offset on the schedule's day-set reference.
+`offset_days` shifts every date in the resolved set. "The night before trash
+day" is the Trash Day config with `offset_days: -1`.
+
+It lives on the **day-set**, not on a schedule's reference to one: a shifted
+set of dates is just another set of dates, so it composes with everything and
+surfaces as its own `calendar.*` entity that automations and dashboards can use
+too.
+
+Applied **last** — after force/veto/base and after `invert` — so it always
+means "that set, moved", which is the only reading that stays predictable when
+combined with invert.
+
+Evaluation widens the window by `|offset|` on both sides before shifting and
+clips back afterwards; without that, a `-1` set loses its first date at the
+window edge.
+
+The holiday shift compounds correctly and for free: when Trash Day moves from
+Fri 2026-11-27 to Sat 11-28 for Thanksgiving, Trash Day Eve moves from Thu to
+Fri with it.
 
 ## Open questions
 

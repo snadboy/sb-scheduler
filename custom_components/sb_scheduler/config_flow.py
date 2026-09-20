@@ -13,6 +13,9 @@ from homeassistant.core import callback
 from homeassistant.util import slugify
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     EntitySelector,
     EntitySelectorConfig,
     SelectSelector,
@@ -36,9 +39,11 @@ from .const import (
     CONF_ID,
     CONF_INVERT,
     CONF_NAME,
+    CONF_OFFSET_DAYS,
     CONF_WEEKDAYS,
     CONF_WORKDAY_CALENDAR,
     DOMAIN,
+    MAX_OFFSET_DAYS,
     WEEKDAYS,
 )
 from .day_set import InvalidDateSpec, parse_date_spec
@@ -55,6 +60,12 @@ WEEKDAY_PICKER = SelectSelector(
 
 
 TEXT = TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))
+OFFSET = NumberSelector(
+    NumberSelectorConfig(
+        min=-MAX_OFFSET_DAYS, max=MAX_OFFSET_DAYS, step=1,
+        mode=NumberSelectorMode.BOX,
+    )
+)
 
 
 def day_set_schema(defaults: dict | None = None) -> vol.Schema:
@@ -95,6 +106,9 @@ def day_set_schema(defaults: dict | None = None) -> vol.Schema:
                 CONF_FORCE_MATCH, default=d.get(CONF_FORCE_MATCH, "")
             ): TEXT,
             vol.Optional(CONF_INVERT, default=d.get(CONF_INVERT, False)): BooleanSelector(),
+            vol.Optional(
+                CONF_OFFSET_DAYS, default=d.get(CONF_OFFSET_DAYS, 0)
+            ): OFFSET,
         }
     )
 

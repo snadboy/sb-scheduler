@@ -33,6 +33,7 @@ from .const import (
     CONF_INCLUDE_DATES,
     CONF_INVERT,
     CONF_NAME,
+    CONF_OFFSET_DAYS,
     CONF_WEEKDAYS,
     HORIZON_DAYS,
     WEEKDAYS,
@@ -198,6 +199,7 @@ class DaySet:
     exclude_dates: str = ""
     exclude_match: str = ""
     invert: bool = False
+    offset_days: int = 0
 
     _eligible: set[datetime.date] = field(default_factory=set, repr=False)
     _window: tuple[datetime.date, datetime.date] | None = field(
@@ -231,6 +233,7 @@ class DaySet:
             exclude_dates=config.get(CONF_EXCLUDE_DATES) or "",
             exclude_match=config.get(CONF_EXCLUDE_MATCH) or "",
             invert=bool(config.get(CONF_INVERT)),
+            offset_days=int(config.get(CONF_OFFSET_DAYS) or 0),
         )
 
     @property
@@ -244,11 +247,21 @@ class DaySet:
         """Recompute eligibility across the whole window."""
         end = start + datetime.timedelta(days=days)
 
+        # An offset moves dates in or out at the edges, so evaluate a window
+        # widened by |offset| and clip back afterwards. Without this, a -1 day
+        # set would be missing its first date and gain nothing at the end.
+        pad = datetime.timedelta(days=abs(self.offset_days))
+        calc_start, calc_end = start - pad, end + pad
+
         async def collect(entities, dates_spec, match=""):
             out: set[datetime.date] = set()
             for entity_id in entities:
-                out |= await _calendar_dates(hass, entity_id, start, end, match)
-            out |= _dates_in_ranges(parse_date_spec(dates_spec), start, end)
+                out |= await _calendar_dates(
+                    hass, entity_id, calc_start, calc_end, match
+                )
+            out |= _dates_in_ranges(
+                parse_date_spec(dates_spec), calc_start, calc_end
+            )
             return out
 
         base = await collect(self.base_calendars, self.base_dates)
@@ -262,8 +275,8 @@ class DaySet:
         mask = {WEEKDAYS.index(d) for d in self.weekdays if d in WEEKDAYS}
 
         eligible: set[datetime.date] = set()
-        cur = start
-        while cur <= end:
+        cur = calc_start
+        while cur <= calc_end:
             if cur in forced:
                 hit = True                       # force wins outright
             elif cur in vetoed:
@@ -276,7 +289,11 @@ class DaySet:
                 eligible.add(cur)
             cur += datetime.timedelta(days=1)
 
-        self._eligible = eligible
+        if self.offset_days:
+            shift = datetime.timedelta(days=self.offset_days)
+            eligible = {d + shift for d in eligible}
+        # Clip back to the window the caller asked about.
+        self._eligible = {d for d in eligible if start <= d <= end}
         self._window = (start, end)
 
     def is_eligible(self, day: datetime.date) -> bool:

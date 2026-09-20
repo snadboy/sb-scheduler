@@ -289,6 +289,49 @@ check("two school weeks -> two runs", len(runs), 2)
 check("first run Mon-Fri", runs[0], (D("2026-09-07"), D("2026-09-11")))
 
 
+# --- offset: "the night before trash day" ----------------------------------
+print("\noffset_days shifts the whole set")
+trash = FakeHass({"calendar.trash": [
+    allday("2026-10-02", "2026-10-03", "Trash Day"),
+    allday("2026-10-09", "2026-10-10", "Trash Day"),
+    allday("2026-11-28", "2026-11-29", "Trash Day (moved)"),
+]})
+day_of = DaySet(id="t", name="Trash Day", base_calendars=["calendar.trash"])
+eve = DaySet(id="te", name="Trash Day Eve",
+             base_calendars=["calendar.trash"], offset_days=-1)
+asyncio.run(day_of.async_refresh(trash, D("2026-10-01"), days=90))
+asyncio.run(eve.async_refresh(trash, D("2026-10-01"), days=90))
+
+check("collection day", day_of.is_eligible(D("2026-10-02")), True)
+check("eve is the day before", eve.is_eligible(D("2026-10-01")), True)
+check("eve is NOT the collection day", eve.is_eligible(D("2026-10-02")), False)
+check("eve follows a holiday shift too",
+      eve.is_eligible(D("2026-11-27")), True)
+check("...and not the unshifted Friday", eve.is_eligible(D("2026-11-26")), False)
+
+# The window must be widened, or the first date is lost at the edge.
+edge = DaySet(id="e", name="E", base_calendars=["calendar.trash"], offset_days=-1)
+asyncio.run(edge.async_refresh(trash, D("2026-10-01"), days=90))
+check("a date shifting IN at the window start is not lost",
+      edge.is_eligible(D("2026-10-01")), True)
+
+fwd = DaySet(id="f", name="F", base_calendars=["calendar.trash"], offset_days=2)
+asyncio.run(fwd.async_refresh(trash, D("2026-10-01"), days=90))
+check("a positive offset moves forward", fwd.is_eligible(D("2026-10-04")), True)
+check("zero offset is unchanged", day_of.is_eligible(D("2026-10-09")), True)
+
+check("next_date_on_or_after respects the offset",
+      eve.next_date_on_or_after(D("2026-10-03")), D("2026-10-08"))
+
+# Offset applies AFTER invert, so it is always "that set, moved".
+inv = DaySet(id="i", name="I", base_calendars=["calendar.trash"],
+             invert=True, offset_days=-1)
+asyncio.run(inv.async_refresh(trash, D("2026-10-01"), days=30))
+check("inverted+offset: day before a NON-trash day",
+      inv.is_eligible(D("2026-10-01")), False)
+check("inverted+offset: 10-02 is the day before non-trash 10-03",
+      inv.is_eligible(D("2026-10-02")), True)
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S)")
