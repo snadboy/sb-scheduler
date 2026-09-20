@@ -157,6 +157,38 @@ def occurrences(pattern: dict) -> list[Occurrence]:
     return out
 
 
+def _resolved(
+    pattern: dict, day: datetime.date, sun_resolver=None, tzinfo=None
+) -> list[tuple[datetime.datetime, Occurrence]]:
+    """Each occurrence paired with the moment it lands on, sorted by moment.
+
+    Fixed times resolve NAIVE while a sun resolver backed by Home Assistant
+    returns AWARE datetimes, and sorting a mixed list raises TypeError. A
+    schedule mixing "00:00" with "sunset+00:15" hits this; one with only a sun
+    time does not, because a one-element sort never compares. So normalise
+    before sorting rather than relying on callers to pass a tz.
+
+    Pairing matters: the list is sorted by resolved moment, so an occurrence's
+    position here does NOT match its position in the stored pattern. Anything
+    wanting to describe a time must carry the occurrence with it.
+    """
+    pairs = []
+    for occurrence in occurrences(pattern):
+        moment = occurrence.resolve(day, sun_resolver)
+        if moment is None:
+            continue
+        if tzinfo is not None and moment.tzinfo is None:
+            moment = moment.replace(tzinfo=tzinfo)
+        pairs.append((moment, occurrence))
+
+    aware = [m.tzinfo for m, _ in pairs if m.tzinfo is not None]
+    if aware and len(aware) != len(pairs):
+        pairs = [
+            (m if m.tzinfo else m.replace(tzinfo=aware[0]), o) for m, o in pairs
+        ]
+    return sorted(pairs, key=lambda pair: pair[0])
+
+
 def times_on(
     pattern: dict, day: datetime.date, sun_resolver=None, tzinfo=None
 ) -> list[datetime.datetime]:
@@ -164,26 +196,27 @@ def times_on(
 
     Sun occurrences have to be resolved per date -- sunset moves, so the order
     of occurrences is not fixed across the year either.
-
-    Fixed times resolve NAIVE while a sun resolver backed by Home Assistant
-    returns AWARE datetimes, and sorting a mixed list raises TypeError. A
-    schedule mixing "00:00" with "sunset+00:15" hits this; one with only a sun
-    time does not, because a one-element sort never compares. So normalise
-    before sorting rather than relying on callers to pass a tz.
     """
-    moments = []
-    for occurrence in occurrences(pattern):
-        moment = occurrence.resolve(day, sun_resolver)
-        if moment is None:
-            continue
-        if tzinfo is not None and moment.tzinfo is None:
-            moment = moment.replace(tzinfo=tzinfo)
-        moments.append(moment)
+    return [moment for moment, _ in _resolved(pattern, day, sun_resolver, tzinfo)]
 
-    aware = [m.tzinfo for m in moments if m.tzinfo is not None]
-    if aware and len(aware) != len(moments):
-        moments = [m if m.tzinfo else m.replace(tzinfo=aware[0]) for m in moments]
-    return sorted(moments)
+
+def describe_times(
+    pattern: dict, day: datetime.date, sun_resolver=None, tzinfo=None
+) -> list[dict]:
+    """Firing times plus WHERE each came from, for display.
+
+    A resolved "06:50" tells you nothing about whether it tracks sunrise. The
+    card needs both, and cannot zip `times` against the stored occurrences
+    because resolution reorders them.
+    """
+    out = []
+    for moment, occurrence in _resolved(pattern, day, sun_resolver, tzinfo):
+        out.append({
+            "time": moment.strftime("%H:%M"),
+            "event": occurrence.event,
+            "offset_minutes": int(occurrence.offset.total_seconds() // 60),
+        })
+    return out
 
 
 def next_trigger(

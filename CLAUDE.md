@@ -187,6 +187,12 @@ Failures are reported separately by the action queue's loud-failure path.
 - **Never re-render while the editor is open** — `set hass` returns early when
   `this._open` is set. Otherwise a state update mid-typing discards the draft.
   The draft is local state, never read back from hass.
+- **A resolved time hides its source.** "6:50" says nothing about tracking
+  sunrise, so the backend also exposes `times_detail` ({time, event,
+  offset_minutes}) and the card renders `6:50 (15m after sunrise)`. The card
+  cannot derive this by zipping `times` against the stored occurrences, because
+  resolution sorts by clock time and reorders them — hence `_resolved()` pairing
+  each moment with its occurrence.
 - Row controls (v0.4.0): an enable **toggle** (a styled checkbox, not
   `ha-switch`, for the same reason as the plain inputs), **Run now**, and
   **Edit**. `Last:` sits above `Next:`; a disabled row shows `Next: —`.

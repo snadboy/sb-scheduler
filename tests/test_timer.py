@@ -253,6 +253,20 @@ check(
     datetime.datetime(2026, 9, 21, 19, 15, tzinfo=TZ),
 )
 
+# --- describe_times: the card needs WHERE a time came from -----------------
+print("\ndescribe_times")
+d = timer.describe_times(
+    {"type": "occurrences", "occurrences": ["00:00", "sunset+00:15:00"]},
+    D("2026-09-21"), fake_sun)
+check("one entry per occurrence", len(d), 2)
+check("sorted by clock time", [x["time"] for x in d], ["00:00", "19:15"])
+check("a fixed time carries no event", d[0]["event"], None)
+check("a sun time carries its event", d[1]["event"], "sunset")
+check("and its offset in minutes", d[1]["offset_minutes"], 15)
+neg = timer.describe_times(
+    {"type": "occurrences", "occurrences": ["sunrise-01:30:00"]}, D("2026-09-21"), fake_sun)
+check("a negative offset stays negative", neg[0]["offset_minutes"], -90)
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S)")

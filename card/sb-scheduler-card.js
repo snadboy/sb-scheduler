@@ -1,4 +1,4 @@
-/* SB Scheduler Card — v0.4.0 (edit-only)
+/* SB Scheduler Card — v0.5.0 (edit-only)
  *
  * Edits existing sb_scheduler schedules: name, day-set, and time pattern.
  * Creating schedules and editing actions are deliberately out of v1 — they are
@@ -9,12 +9,28 @@
  */
 
 const CARD = "sb-scheduler-card";
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 // "sunset", "sunset+00:15:00", "sunrise-01:30" — must survive a round-trip
 // through the editor, which is why these get a text field and not <input type=time>.
 const SUN = /^(sunrise|sunset)(\s*[+-]\s*\d{1,2}:\d{2}(:\d{2})?)?$/i;
 const isSun = (v) => SUN.test(String(v ?? "").trim());
+
+// "06:50" -> "6:50"; a schedule time is read, not sorted, so drop the pad.
+const hhmm = (t) => String(t ?? "").replace(/^0/, "");
+
+// "6:50 (15m after sunrise)" — a resolved clock time alone hides the fact that
+// it tracks the sun and will be different tomorrow.
+const describeTime = (d) => {
+  const clock = hhmm(d.time);
+  if (!d.event) return clock;
+  const mins = Number(d.offset_minutes || 0);
+  if (!mins) return `${clock} (at ${d.event})`;
+  const when = mins > 0 ? "after" : "before";
+  const n = Math.abs(mins);
+  const amount = n % 60 === 0 ? `${n / 60}h` : n > 60 ? `${Math.floor(n / 60)}h${n % 60}m` : `${n}m`;
+  return `${clock} (${amount} ${when} ${d.event})`;
+};
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -192,8 +208,11 @@ class SbSchedulerCard extends HTMLElement {
     return rows.map((s) => {
       const pattern = s.pattern || {};
       const summary = pattern.type === "interval"
-        ? `every ${pattern.every_minutes} min, ${String(pattern.start).slice(0, 5)}–${String(pattern.stop).slice(0, 5)}`
-        : (s.times || []).map((t) => String(t).slice(0, 5)).join(", ");
+        ? `every ${pattern.every_minutes} min, ${hhmm(String(pattern.start).slice(0, 5))}\u2013${hhmm(String(pattern.stop).slice(0, 5))}`
+        : (s.times_detail
+            ? s.times_detail.map(describeTime)
+            : (s.times || []).map((t) => hhmm(String(t).slice(0, 5)))
+          ).join(", ");
       const on = s.state !== "off";
       return `<div class="row ${on ? "" : "disabled"}">
         <div class="info">

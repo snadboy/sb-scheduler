@@ -27,7 +27,7 @@ from .const import (
     SIGNAL_DAY_SETS_UPDATED,
     SIGNAL_SCHEDULES_UPDATED,
 )
-from .timer import next_trigger, times_on
+from .timer import describe_times, next_trigger, times_on
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,6 +113,12 @@ class ScheduleEntity(SwitchEntity):
                 t.strftime("%H:%M")
                 for t in times_on(pattern, dt_util.now().date(), self._sun)
             ],
+            # Same times, plus which sun event (if any) each one tracks. The
+            # card cannot derive this by zipping against the stored pattern,
+            # because resolution sorts by clock time.
+            "times_detail": describe_times(
+                pattern, dt_util.now().date(), self._sun
+            ),
             ATTR_NEXT_TRIGGER: self._next.isoformat() if self._next else None,
             ATTR_LAST_TRIGGERED: schedule.get(ATTR_LAST_TRIGGERED),
             CONF_ACTIONS: schedule.get(CONF_ACTIONS, []),
