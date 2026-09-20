@@ -24,8 +24,9 @@ attribution chain stays intact. **No upstream merge path is planned.**
   alongside the running one. `actions.py` is already ported from here;
   `websockets.py` is still unported (only needed if the card ever outgrows
   reading entity attributes).
-- `card/sb-scheduler-card.js` — the edit-only card. Deployed to `/config/www/`
-  and registered as a dashboard resource; NOT yet its own HACS repo.
+- The card lives in **its own repo**: `snadboy/sb-scheduler-card`
+  (`~/projects/git/sb-scheduler-card`), HACS custom repo id **1378324666**,
+  category Dashboard, MIT. Split out 2026-09-20; it used to be `card/` here.
 - `tests/test_day_set.py` (31 checks) and `tests/test_timer.py` (19) — run with
   plain `python3`, no HA needed. `day_set.py`'s few HA imports are stubbed;
   `timer.py` has none at all, so the replaced scheduling core tests natively.
@@ -204,7 +205,7 @@ It records the **firing**, not the outcome: actions retry asynchronously when a
 target is unavailable, so "it ran" and "it succeeded" are different questions.
 Failures are reported separately by the action queue's loud-failure path.
 
-## Phase 2 notes (card)
+## Phase 2 notes (card) — see snadboy/sb-scheduler-card for the current set
 
 - **Edit-only by design.** Creating schedules and editing actions are most of the
   work; `sb_scheduler.create_schedule` already covers creation. This got a usable
