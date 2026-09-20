@@ -1,4 +1,4 @@
-/* SB Scheduler Card — v0.3.0 (edit-only)
+/* SB Scheduler Card — v0.4.0 (edit-only)
  *
  * Edits existing sb_scheduler schedules: name, day-set, and time pattern.
  * Creating schedules and editing actions are deliberately out of v1 — they are
@@ -9,7 +9,7 @@
  */
 
 const CARD = "sb-scheduler-card";
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 // "sunset", "sunset+00:15:00", "sunrise-01:30" — must survive a round-trip
 // through the editor, which is why these get a text field and not <input type=time>.
@@ -194,17 +194,26 @@ class SbSchedulerCard extends HTMLElement {
       const summary = pattern.type === "interval"
         ? `every ${pattern.every_minutes} min, ${String(pattern.start).slice(0, 5)}–${String(pattern.stop).slice(0, 5)}`
         : (s.times || []).map((t) => String(t).slice(0, 5)).join(", ");
-      return `<div class="row ${s.state === "off" ? "disabled" : ""}">
+      const on = s.state !== "off";
+      return `<div class="row ${on ? "" : "disabled"}">
         <div class="info">
           <div class="name">${esc(s.friendly_name)}</div>
           <div class="meta">
             <span class="chip">${esc(s.day_set)}</span>
             <span>${esc(summary)}</span>
           </div>
-          <div class="next">${s.state === "off" ? "Disabled" : `Next: ${esc(prettyTrigger(s.next_trigger))}`}</div>
-          <div class="last">Last run: ${esc(s.last_triggered ? prettyTrigger(s.last_triggered) : "never")}</div>
+          <div class="last">Last: ${esc(s.last_triggered ? prettyTrigger(s.last_triggered) : "never")}</div>
+          <div class="next">Next: ${on ? esc(prettyTrigger(s.next_trigger)) : "\u2014"}</div>
         </div>
-        <button class="edit" data-id="${esc(s.schedule_id)}">Edit</button>
+        <div class="controls">
+          <label class="toggle" title="${on ? "Disable" : "Enable"} this schedule">
+            <input type="checkbox" class="enable" data-entity="${esc(s.entity_id)}" ${on ? "checked" : ""}>
+            <span></span>
+          </label>
+          <button class="run" data-entity="${esc(s.entity_id)}"
+                  title="Run the actions now, ignoring the day-set">Run now</button>
+          <button class="edit" data-id="${esc(s.schedule_id)}">Edit</button>
+        </div>
       </div>`;
     }).join("");
   }
@@ -277,6 +286,37 @@ class SbSchedulerCard extends HTMLElement {
     root.querySelectorAll("button.edit").forEach((b) =>
       b.addEventListener("click", () => this._beginEdit(b.dataset.id)));
 
+    // Run now fires the actions immediately, ignoring the day-set. No confirm
+    // step: the button is explicit and the consequence is one run of something
+    // the schedule does anyway. The Last: line updating is the receipt.
+    root.querySelectorAll("button.run").forEach((b) =>
+      b.addEventListener("click", async () => {
+        b.disabled = true;
+        b.textContent = "Running\u2026";
+        try {
+          await this._hass.callService("sb_scheduler", "run_now", {
+            entity_id: b.dataset.entity,
+          });
+        } catch (err) {
+          b.textContent = "Failed";
+          b.title = String(err?.message || err);
+          return;
+        }
+        // last_triggered changes, which re-renders the list and restores this
+        // button. Restore by hand too, in case the service was a no-op.
+        setTimeout(() => {
+          b.disabled = false;
+          b.textContent = "Run now";
+        }, 1500);
+      }));
+
+    root.querySelectorAll("input.enable").forEach((box) =>
+      box.addEventListener("change", () => {
+        this._hass.callService("switch", box.checked ? "turn_on" : "turn_off", {
+          entity_id: box.dataset.entity,
+        });
+      }));
+
     if (!this._open) return;
     const d = this._draft;
 
@@ -334,17 +374,31 @@ const STYLE = `
 .body { padding: 8px 16px 16px; }
 .empty { color: var(--secondary-text-color); padding: 12px 0; line-height: 1.5; }
 .row { display: flex; align-items: center; gap: 12px; padding: 10px 0;
-       border-bottom: 1px solid var(--divider-color); }
+       border-bottom: 1px solid var(--divider-color); flex-wrap: wrap; }
 .row:last-of-type { border-bottom: none; }
 .row.disabled .name, .row.disabled .meta { opacity: .55; }
-.info { flex: 1; min-width: 0; }
+/* min-width keeps the controls from crushing the text before the row wraps */
+.info { flex: 1 1 180px; min-width: 180px; }
 .name { font-weight: 500; }
 .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
         color: var(--secondary-text-color); font-size: .9em; margin-top: 2px; }
 .chip { background: var(--primary-color); color: var(--text-primary-color);
         border-radius: 10px; padding: 1px 8px; font-size: .85em; }
-.next { color: var(--secondary-text-color); font-size: .85em; margin-top: 2px; }
-.last { color: var(--secondary-text-color); font-size: .8em; opacity: .8; }
+.last { color: var(--secondary-text-color); font-size: .85em; margin-top: 2px; }
+.next { color: var(--secondary-text-color); font-size: .85em; }
+.controls { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.controls button { white-space: nowrap; }
+.controls button[disabled] { opacity: .6; cursor: default; }
+.toggle { position: relative; display: inline-block; width: 40px; height: 22px; flex: 0 0 auto; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle span { position: absolute; inset: 0; cursor: pointer; border-radius: 22px;
+               background: var(--disabled-text-color, #9e9e9e); transition: background .2s; }
+.toggle span::before { content: ""; position: absolute; width: 16px; height: 16px;
+                       left: 3px; top: 3px; border-radius: 50%; background: #fff;
+                       transition: transform .2s; }
+.toggle input:checked + span { background: var(--primary-color); }
+.toggle input:checked + span::before { transform: translateX(18px); }
+.toggle input:focus-visible + span { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 button { cursor: pointer; border-radius: 6px; border: 1px solid var(--divider-color);
          background: var(--card-background-color); color: var(--primary-text-color);
          padding: 6px 12px; font: inherit; }

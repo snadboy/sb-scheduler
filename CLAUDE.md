@@ -187,6 +187,16 @@ Failures are reported separately by the action queue's loud-failure path.
 - **Never re-render while the editor is open** — `set hass` returns early when
   `this._open` is set. Otherwise a state update mid-typing discards the draft.
   The draft is local state, never read back from hass.
+- Row controls (v0.4.0): an enable **toggle** (a styled checkbox, not
+  `ha-switch`, for the same reason as the plain inputs), **Run now**, and
+  **Edit**. `Last:` sits above `Next:`; a disabled row shows `Next: —`.
+- **Run now has no confirmation step.** It fires actions immediately, but the
+  button is explicit and the consequence is one run of something the schedule
+  does anyway. The `Last:` line updating is the receipt — and in practice the
+  transient "Running…" label is invisible, because the service returns and
+  `last_triggered` re-renders the row faster than the eye.
+- `.row` uses `flex-wrap` and `.info` has `flex: 1 1 180px`, so the three
+  controls drop to a second line on a phone rather than crushing the text.
 - Plain `<input>` elements, not `ha-textfield`: it renders invisible outside
   `ha-form`. Native `<select>` needs explicit `option` colours plus
   `color-scheme: light dark` or its popup ignores the theme.
