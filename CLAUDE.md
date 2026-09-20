@@ -139,9 +139,15 @@ distinct per-time actions would need per-occurrence actions.
 Cutover: enable the sb_scheduler one and disable the old integration's, one at
 a time. Do not run both.
 
-**Bedside lamps cut over 2026-09-19** — `switch.bedside_lamps_wakeup` on,
-`switch.schedule_dan_bedside_lamps` off. Irrigation and garden lights still on
-the old integration.
+**Cut over 2026-09-19:** bedside lamps and garden irrigation. Garden lights
+(two schedules) still on the old integration.
+
+**`switch.b_hyve_node_garden` is a TP-Link HS103 smart plug** (`platform:
+tplink`), not the b-hyve irrigation integration. It powers the b-hyve node; the
+watering schedule itself lives in the b-hyve app. So "Garden Irrigation" is a
+daily 06:00 "make sure the controller has power" re-assert, and firing it is
+idempotent — it does not start watering. It has sat `on` for days at a time,
+which is the tell.
 
 ### The action-shape landmine
 
