@@ -1,4 +1,4 @@
-/* SB Scheduler Card — v0.2.0 (edit-only)
+/* SB Scheduler Card — v0.3.0 (edit-only)
  *
  * Edits existing sb_scheduler schedules: name, day-set, and time pattern.
  * Creating schedules and editing actions are deliberately out of v1 — they are
@@ -9,7 +9,12 @@
  */
 
 const CARD = "sb-scheduler-card";
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
+
+// "sunset", "sunset+00:15:00", "sunrise-01:30" — must survive a round-trip
+// through the editor, which is why these get a text field and not <input type=time>.
+const SUN = /^(sunrise|sunset)(\s*[+-]\s*\d{1,2}:\d{2}(:\d{2})?)?$/i;
+const isSun = (v) => SUN.test(String(v ?? "").trim());
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -100,7 +105,8 @@ class SbSchedulerCard extends HTMLElement {
       name: s.friendly_name || "",
       day_set: s.day_set || "daily",
       type: pattern.type === "interval" ? "interval" : "occurrences",
-      occurrences: (pattern.occurrences || []).map((t) => String(t).slice(0, 5)),
+      occurrences: (pattern.occurrences || []).map((t) =>
+        isSun(t) ? String(t).trim() : String(t).slice(0, 5)),
       start: String(pattern.start || "09:00").slice(0, 5),
       stop: String(pattern.stop || "17:00").slice(0, 5),
       every_minutes: Number(pattern.every_minutes || 15),
@@ -124,8 +130,11 @@ class SbSchedulerCard extends HTMLElement {
     if (d.type === "occurrences") {
       const times = d.occurrences.map((t) => t.trim()).filter(Boolean);
       if (!times.length) return "Add at least one time.";
-      const bad = times.filter((t) => !timeOk(t));
-      if (bad.length) return `Not a valid time: ${bad.join(", ")}`;
+      const bad = times.filter((t) => !timeOk(t) && !isSun(t));
+      if (bad.length) {
+        return `Not a valid time: ${bad.join(", ")}. Use HH:MM, or sunrise/sunset ` +
+               `with an optional offset such as sunset+00:15.`;
+      }
     } else {
       if (!timeOk(d.start) || !timeOk(d.stop)) return "Start and stop must be times.";
       if (d.stop <= d.start) return "Stop must be after start.";
@@ -227,10 +236,13 @@ class SbSchedulerCard extends HTMLElement {
         <div class="times">
           ${d.occurrences.map((t, i) => `
             <div class="timerow">
-              <input class="occ" data-i="${i}" type="time" value="${esc(t)}">
+              <input class="occ" data-i="${i}" type="${isSun(t) ? "text" : "time"}"
+                     value="${esc(t)}" ${isSun(t) ? 'title="Relative to the sun"' : ""}>
               ${d.occurrences.length > 1 ? `<button class="drop" data-i="${i}" title="Remove">✕</button>` : ""}
             </div>`).join("")}
           <button class="add">+ Add a time</button>
+          <div class="hint">Times are HH:MM, or sunrise/sunset with an offset —
+            e.g. <code>sunset+00:15</code>.</div>
         </div>` : `
         <div class="interval">
           <label class="field inline"><span>From</span><input id="start" type="time" value="${esc(d.start)}"></label>
@@ -352,6 +364,7 @@ option { background: var(--card-background-color); color: var(--primary-text-col
 .timerow { display: flex; align-items: center; gap: 6px; }
 .interval { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .count { color: var(--secondary-text-color); font-size: .85em; padding-bottom: 10px; }
+.hint { color: var(--secondary-text-color); font-size: .8em; margin-top: 4px; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .error { background: var(--error-color); color: var(--text-primary-color);
          padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; }

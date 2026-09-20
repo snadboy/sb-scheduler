@@ -11,6 +11,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
 from .actions import ActionHandler
@@ -26,7 +27,7 @@ from .const import (
     SIGNAL_DAY_SETS_UPDATED,
     SIGNAL_SCHEDULES_UPDATED,
 )
-from .timer import next_trigger, occurrence_times
+from .timer import next_trigger, times_on
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -105,7 +106,13 @@ class ScheduleEntity(SwitchEntity):
             # start/stop/every_minutes. `times` below is the expansion, which
             # is display-only — editing that would lose the interval.
             CONF_PATTERN: pattern,
-            "times": [t.isoformat() for t in occurrence_times(pattern)],
+            # Clock times for display. The RAW pattern above is what an editor
+            # must round-trip: these are resolved for today, so a sun-relative
+            # occurrence shows as a concrete time and would lose its meaning.
+            "times": [
+                t.strftime("%H:%M")
+                for t in times_on(pattern, dt_util.now().date(), self._sun)
+            ],
             ATTR_NEXT_TRIGGER: self._next.isoformat() if self._next else None,
             ATTR_LAST_TRIGGERED: schedule.get(ATTR_LAST_TRIGGERED),
             CONF_ACTIONS: schedule.get(CONF_ACTIONS, []),
@@ -150,6 +157,20 @@ class ScheduleEntity(SwitchEntity):
         self._rearm()
 
     # --- timing ------------------------------------------------------------
+    def _sun(self, event: str, day):
+        """Sunrise/sunset for a SPECIFIC date.
+
+        `sun.next_rising` (what upstream reads) only knows the next one, so it
+        cannot answer "when does the sun set three weeks from Tuesday" --
+        the same now-only limitation as the workday sensor.
+        """
+        try:
+            moment = get_astral_event_date(self.hass, event, day)
+        except Exception:  # noqa: BLE001 - never let astral break arming
+            _LOGGER.exception("Could not resolve %s for %s", event, day)
+            return None
+        return dt_util.as_local(moment) if moment else None
+
     @callback
     def _cancel(self) -> None:
         if self._timer_unsub:
@@ -174,7 +195,9 @@ class ScheduleEntity(SwitchEntity):
                     schedule.get(CONF_DAY_SET),
                 )
             else:
-                self._next = next_trigger(schedule, day_set, dt_util.now())
+                self._next = next_trigger(
+                    schedule, day_set, dt_util.now(), self._sun
+                )
                 if self._next:
                     self._timer_unsub = async_track_point_in_time(
                         self.hass, self._handle_trigger, self._next

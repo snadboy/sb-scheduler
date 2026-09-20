@@ -206,6 +206,26 @@ window, and the old integration keeps running the real ones meanwhile.
 - **Interval semantics** — start-only repeats; ranges stay in `occurrences`
   (2026-09-19).
 
+## Sun-relative occurrences
+
+An occurrence is `HH:MM`, or `sunrise`/`sunset` with an optional offset
+(`sunset+00:15:00`, `sunrise-01:30`). Required by a real schedule: garden
+lights run sunset+15 to sunrise+15.
+
+Resolved **per date** via `get_astral_event_date`, not from `sun.next_rising`.
+Upstream reads the sun entity's next_rising/next_setting attributes, which only
+describe the *next* event — the same now-only limitation as the workday sensor,
+and unusable for a trigger three weeks out.
+
+`timer.py` stays HA-free: the resolver arrives as a `sun_resolver(event, date)`
+callback, so the whole module still tests offline.
+
+**Gotcha:** fixed times resolve naive, HA sun times resolve aware, and sorting a
+mixed list raises TypeError. A schedule with only a sun time survives (a
+one-element sort never compares) — one mixing `00:00` with `sunset+00:15` does
+not. `times_on` normalises before sorting. This shipped broken and was caught
+only by recreating a real schedule.
+
 ## Known wart: the work week is written twice
 
 "Which days are work days" lives in two places — the **Workday integration's**

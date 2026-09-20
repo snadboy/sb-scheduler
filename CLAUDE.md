@@ -119,6 +119,26 @@ The two fixes from the predecessor fork carry forward and must not regress:
    model this generalises into day-sets and should read a *calendar*, not a
    binary_sensor — see DESIGN.md on why the sensor can only answer "now".
 
+## Recreating the real schedules
+
+The three live schedules map onto four sb_scheduler schedules, all created
+**disabled** — the old integration still owns them, and double-firing irrigation
+is a real-world consequence, not a cosmetic one.
+
+| Original | Becomes |
+|---|---|
+| Bedside Lamps - Wakeup (`workday`, 06:30) | one schedule, unchanged |
+| Garden Irrigation (`daily`, `06:00 - 07:00`) | one schedule at 06:00. **The 07:00 stop fires nothing upstream** — actions map 1:1 to timeslots and there is only one action, so the window end is cosmetic. b-hyve ends its own cycle. |
+| Garden Lights (3 slots, 3 different actions, sun-relative) | **two** schedules: On at `00:00` + `sunset+00:15:00`, Off at `sunrise+00:15:00` |
+
+Garden Lights exposed the one real modelling gap: upstream allows **a different
+action per timeslot**, this model has one action list per schedule. Splitting by
+action is a faithful and arguably clearer translation, but a schedule with many
+distinct per-time actions would need per-occurrence actions.
+
+Cutover: enable the sb_scheduler ones and disable the old integration's, one at
+a time. Do not run both.
+
 ## Last run
 
 `last_triggered` is stored **in the schedule**, not held in memory, so a restart
