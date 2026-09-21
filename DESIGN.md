@@ -408,8 +408,17 @@ cycle in the first place.
 **The form.** Twenty flat fields was a wall, so the options flow is five
 collapsible `section()`s — Sources, Cancelled, Always, Pick, Advanced — each
 opening expanded only when it holds a value. Storage stays flat; `flatten()`
-folds a submission back. This is the "capability first, card editing later"
-call: day-set editing inside the card is a separate phase.
+folds a submission back.
+
+**Day-set editing from the card (same day, v0.3.1 + card v0.10.0).** Two
+services, `set_day_set` and `remove_day_set`, write the config entry's
+options (which reloads the entry) and validate with `validate_day_set` — the
+identical function the form calls, moved into `day_set.py` so the two entry
+points cannot drift. The roster sensor carries each day-set's stored config
+and its dependents (`used_by`), so the card needs no websocket API here
+either. Removal is refused while a schedule or another day-set depends on
+the set: a silently broken schedule is the exact failure this integration
+exists to prevent. The Configure form stays as the second door.
 
 ## Open questions
 

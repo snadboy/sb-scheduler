@@ -59,7 +59,7 @@ from .const import (
     PICK_NTH_OPTIONS,
     WEEKDAYS,
 )
-from .day_set import InvalidDateSpec, parse_date_spec
+from .day_set import allocate_day_set_id, validate_day_set
 
 CALENDARS = EntitySelector(EntitySelectorConfig(domain="calendar", multiple=True))
 DATES = TextSelector(
@@ -220,36 +220,9 @@ def day_set_schema(defaults: dict | None, others: list[dict]) -> vol.Schema:
     )
 
 
-def _validate(flat: dict, day_sets: list[dict], editing: str | None) -> dict[str, str]:
-    """What can be wrong: unreadable dates, a stride with no anchor, a base
-    that is missing, is this very day-set, or leads back to it."""
-    errors: dict[str, str] = {}
-    for key in (CONF_BASE_DATES, CONF_EXCLUDE_DATES, CONF_FORCE_DATES):
-        try:
-            parse_date_spec(flat.get(key) or "")
-        except InvalidDateSpec:
-            errors[key] = "invalid_dates"
-            errors.setdefault("base", "invalid_dates")
-
-    if flat.get(CONF_PICK) == PICK_EVERY and not flat.get(CONF_PICK_ANCHOR):
-        errors["base"] = "anchor_required"
-
-    base = flat.get(CONF_BASE_DAY_SET) or ""
-    if base:
-        by_id = {d[CONF_ID]: d for d in day_sets}
-        seen: set[str] = set()
-        cur = base
-        while cur:
-            if cur == editing or cur in seen:
-                errors["base"] = "base_cycle"
-                break
-            cfg = by_id.get(cur)
-            if cfg is None:
-                errors["base"] = "base_missing"
-                break
-            seen.add(cur)
-            cur = cfg.get(CONF_BASE_DAY_SET) or ""
-    return errors
+# Validation lives in day_set.py so the set_day_set service (the card's write
+# path) and this form can never disagree about what is allowed.
+_validate = validate_day_set
 
 
 def _seed_day_sets(workday_calendar: str | None,
@@ -347,20 +320,7 @@ class SbSchedulerOptionsFlow(config_entries.OptionsFlow):
 
     # --- add ---------------------------------------------------------------
     def _new_id(self, name: str) -> str:
-        """A readable id derived from the name.
-
-        Schedules will reference day-sets by id, so an opaque token would end up
-        in every schedule's config and in every service call. "school_day" beats
-        "e94e9983".
-        """
-        base = slugify(name) or "day_set"
-        taken = {d[CONF_ID] for d in self._day_sets}
-        if base not in taken:
-            return base
-        n = 2
-        while f"{base}_{n}" in taken:
-            n += 1
-        return f"{base}_{n}"
+        return allocate_day_set_id(name, {d[CONF_ID] for d in self._day_sets}, slugify)
 
     async def async_step_add(self, user_input=None):
         errors: dict[str, str] = {}

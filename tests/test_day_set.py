@@ -522,6 +522,38 @@ broken = DaySet(id="b", name="B", base_calendars=["calendar.x"])
 asyncio.run(broken.async_refresh(BrokenHass({}, existing=["calendar.x"]), D("2026-10-01"), days=30))
 check("an unrelated failure is NOT treated as missing", broken._missing_sources, [])
 
+print("\nvalidate_day_set — shared by the form and the set_day_set service")
+validate = _day_set.validate_day_set
+existing = [{"id": "monday", "name": "Monday"},
+            {"id": "election_day", "name": "Election Day", "base_day_set": "monday"}]
+check("a plain valid set", validate({"name": "X", "weekdays": ["tue"]}, existing, None), {})
+check("name required", validate({"name": "  "}, existing, None).get("base"), "name_required")
+check("bad dates are flagged by field",
+      validate({"name": "X", "base_dates": "nope"}, existing, None).get("base_dates"), "invalid_dates")
+check("every needs an anchor",
+      validate({"name": "X", "pick": "every"}, existing, None).get("base"), "anchor_required")
+check("every with an anchor is fine",
+      validate({"name": "X", "pick": "every", "pick_anchor": "2026-09-22"}, existing, None), {})
+check("building on a missing set",
+      validate({"name": "X", "base_day_set": "ghost"}, existing, None).get("base"), "base_missing")
+check("building on yourself",
+      validate({"name": "Monday", "base_day_set": "monday"}, existing, "monday").get("base"), "base_cycle")
+check("an indirect cycle (monday -> election_day -> monday)",
+      validate({"name": "Monday", "base_day_set": "election_day"}, existing, "monday").get("base"), "base_cycle")
+check("a legitimate chain is allowed",
+      validate({"name": "Y", "base_day_set": "election_day"}, existing, None), {})
+check("every code has a message",
+      all(c in _day_set.VALIDATION_MESSAGES for c in
+          ("invalid_dates", "anchor_required", "base_cycle", "base_missing", "name_required")), True)
+
+print("\nallocate_day_set_id")
+slug = lambda s: "".join(ch if ch.isalnum() else "_" for ch in s.lower()).strip("_")
+alloc = _day_set.allocate_day_set_id
+check("slug of the name", alloc("School Day", set(), slug), "school_day")
+check("collision gets _2", alloc("School Day", {"school_day"}, slug), "school_day_2")
+check("...then _3", alloc("School Day", {"school_day", "school_day_2"}, slug), "school_day_3")
+check("empty name still yields an id", alloc("", set(), slug), "day_set")
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S)")

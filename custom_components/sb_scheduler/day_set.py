@@ -84,6 +84,76 @@ def order_by_dependency(configs: list[dict]) -> tuple[list[dict], list[dict]]:
     return ordered, []
 
 
+# Every field a day-set config may carry. The services filter incoming data
+# to this so a stray key can never land in the config entry.
+DAY_SET_FIELDS = (
+    CONF_NAME, CONF_WEEKDAYS, CONF_BASE_DAY_SET, CONF_BASE_CALENDARS, CONF_BASE_DATES,
+    CONF_EXCLUDE_CALENDARS, CONF_EXCLUDE_DATES, CONF_EXCLUDE_MATCH,
+    CONF_FORCE_CALENDARS, CONF_FORCE_DATES, CONF_FORCE_MATCH,
+    CONF_PICK, CONF_PICK_EVERY, CONF_PICK_ANCHOR, CONF_PICK_NTH, CONF_MONTHS,
+    CONF_INVERT, CONF_OFFSET_DAYS, CONF_EXPOSE_CALENDAR,
+)
+
+# One vocabulary for both the options form (codes) and the services (text).
+VALIDATION_MESSAGES = {
+    "invalid_dates": "Could not read those dates. Use YYYY-MM-DD, separated by "
+                     "commas, with ranges written as YYYY-MM-DD..YYYY-MM-DD.",
+    "anchor_required": '"Every Nth" needs a starting date.',
+    "base_cycle": "That day-set is built on this one (directly or through "
+                  "others), which would loop forever.",
+    "base_missing": "That base day-set does not exist.",
+    "name_required": "A day-set needs a name.",
+}
+
+
+def validate_day_set(flat: dict, day_sets: list[dict], editing: str | None) -> dict[str, str]:
+    """What can be wrong with a day-set config, keyed by field ("base" =
+    form-level). Shared by the options flow and the set_day_set service so the
+    two entry points cannot disagree about what is allowed."""
+    errors: dict[str, str] = {}
+    if not str(flat.get(CONF_NAME) or "").strip():
+        errors["base"] = "name_required"
+    for key in (CONF_BASE_DATES, CONF_EXCLUDE_DATES, CONF_FORCE_DATES):
+        try:
+            parse_date_spec(flat.get(key) or "")
+        except InvalidDateSpec:
+            errors[key] = "invalid_dates"
+            errors.setdefault("base", "invalid_dates")
+
+    if flat.get(CONF_PICK) == PICK_EVERY and not flat.get(CONF_PICK_ANCHOR):
+        errors["base"] = "anchor_required"
+
+    base = flat.get(CONF_BASE_DAY_SET) or ""
+    if base:
+        by_id = {d[CONF_ID]: d for d in day_sets}
+        seen: set[str] = set()
+        cur = base
+        while cur:
+            if cur == editing or cur in seen:
+                errors["base"] = "base_cycle"
+                break
+            cfg = by_id.get(cur)
+            if cfg is None:
+                errors["base"] = "base_missing"
+                break
+            seen.add(cur)
+            cur = cfg.get(CONF_BASE_DAY_SET) or ""
+    return errors
+
+
+def allocate_day_set_id(name: str, taken: set[str], slug) -> str:
+    """A readable id from the name: "school_day" beats "e94e9983", because
+    schedules reference day-sets by id and it ends up in every service call.
+    `slug` is HA's slugify, passed in so this stays importable offline."""
+    base = slug(name) or "day_set"
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base}_{n}" in taken:
+        n += 1
+    return f"{base}_{n}"
+
+
 def pick_every(
     eligible: set[datetime.date], every: int, anchor: datetime.date
 ) -> set[datetime.date]:

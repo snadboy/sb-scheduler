@@ -80,3 +80,88 @@ run_now:
     entity:
       domain: switch
       integration: sb_scheduler
+
+set_day_set:
+  fields:
+    id:
+      example: election_day
+      selector:
+        text:
+    name:
+      required: true
+      example: Election Day
+      selector:
+        text:
+    weekdays:
+      example: '["mon"]'
+      selector:
+        object:
+    base_day_set:
+      example: monday
+      selector:
+        text:
+    base_calendars:
+      selector:
+        object:
+    base_dates:
+      example: '2026-12-25, 2027-06-05..2027-08-17'
+      selector:
+        text:
+    exclude_calendars:
+      selector:
+        object:
+    exclude_dates:
+      selector:
+        text:
+    exclude_match:
+      selector:
+        text:
+    force_calendars:
+      selector:
+        object:
+    force_dates:
+      selector:
+        text:
+    force_match:
+      selector:
+        text:
+    pick:
+      example: nth_of_month
+      selector:
+        select:
+          options: ["none", "every", "nth_of_month"]
+    pick_every:
+      selector:
+        number:
+          min: 1
+          max: 366
+    pick_anchor:
+      selector:
+        date:
+    pick_nth:
+      selector:
+        select:
+          options: ["1", "2", "3", "4", "5", "last"]
+    months:
+      example: '["11"]'
+      selector:
+        object:
+    invert:
+      selector:
+        boolean:
+    offset_days:
+      selector:
+        number:
+          min: -30
+          max: 30
+    expose_calendar:
+      selector:
+        boolean:
+
+remove_day_set:
+  fields:
+    id:
+      required: true
+      example: election_day
+      selector:
+        text:

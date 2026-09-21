@@ -16,19 +16,31 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.util import slugify
 
 from .const import (
     CONF_ACTIONS,
+    CONF_BASE_DAY_SET,
     CONF_DAY_SET,
+    CONF_DAY_SETS,
     CONF_ENABLED,
+    CONF_ID,
+    CONF_NAME,
     CONF_PATTERN,
     CONF_SCHEDULE_ID,
     CONF_STEPS,
     DOMAIN,
     SIGNAL_SCHEDULES_UPDATED,
+)
+from .day_set import (
+    DAY_SET_FIELDS,
+    VALIDATION_MESSAGES,
+    allocate_day_set_id,
+    validate_day_set,
 )
 from .registry import DaySetRegistry
 from .schedule_store import ScheduleStore
@@ -42,6 +54,17 @@ SERVICE_REFRESH = "refresh"
 SERVICE_CREATE = "create_schedule"
 SERVICE_EDIT = "edit_schedule"
 SERVICE_REMOVE = "remove_schedule"
+SERVICE_SET_DAY_SET = "set_day_set"
+SERVICE_REMOVE_DAY_SET = "remove_day_set"
+
+# The card's write path for day-sets. Permissive on purpose: the known fields
+# are filtered out afterwards, and validate_day_set decides what is allowed,
+# so this stays in step with the options form without a second schema.
+DAY_SET_SCHEMA = vol.Schema(
+    {vol.Optional(CONF_ID): cv.string, vol.Required(CONF_NAME): cv.string},
+    extra=vol.ALLOW_EXTRA,
+)
+REMOVE_DAY_SET_SCHEMA = vol.Schema({vol.Required(CONF_ID): cv.string})
 
 QUERY_SCHEMA = vol.Schema(
     {vol.Required("day_set"): cv.string, vol.Optional("date"): cv.date}
@@ -187,6 +210,64 @@ def _register_services(hass: HomeAssistant) -> None:
                 return
         raise vol.Invalid(f"Unknown schedule '{call.data[CONF_SCHEDULE_ID]}'")
 
+    # --- day-sets: the config entry's options, edited from the card --------
+    def _entry() -> ConfigEntry:
+        return hass.config_entries.async_entries(DOMAIN)[0]
+
+    async def async_set_day_set(call: ServiceCall) -> dict:
+        """Create (no id) or update (id) a day-set. Saving the options
+        reloads the entry, so the change is live within a couple of seconds."""
+        entry = _entry()
+        day_sets = list(entry.options.get(CONF_DAY_SETS, []))
+        flat = {k: v for k, v in call.data.items() if k in DAY_SET_FIELDS}
+        editing = call.data.get(CONF_ID) or None
+        if editing and not any(d[CONF_ID] == editing for d in day_sets):
+            raise ServiceValidationError(f"Unknown day-set '{editing}'")
+        errors = validate_day_set(flat, day_sets, editing)
+        if errors:
+            code = errors.get("base") or next(iter(errors.values()))
+            raise ServiceValidationError(VALIDATION_MESSAGES.get(code, code))
+        if editing:
+            day_sets = [{**d, **flat} if d[CONF_ID] == editing else d for d in day_sets]
+            ds_id = editing
+        else:
+            ds_id = allocate_day_set_id(flat[CONF_NAME], {d[CONF_ID] for d in day_sets}, slugify)
+            day_sets.append({**flat, CONF_ID: ds_id})
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_DAY_SETS: day_sets}
+        )
+        return {CONF_ID: ds_id}
+
+    async def async_remove_day_set(call: ServiceCall) -> None:
+        """Refuse while anything depends on it. A silently broken schedule is
+        the failure mode this whole integration exists to avoid."""
+        entry = _entry()
+        ds_id = call.data[CONF_ID]
+        day_sets = list(entry.options.get(CONF_DAY_SETS, []))
+        if not any(d[CONF_ID] == ds_id for d in day_sets):
+            raise ServiceValidationError(f"Unknown day-set '{ds_id}'")
+        users: list[str] = []
+        for data in _entries(hass):
+            users += [f"schedule '{s.get('name')}'" for s in data.schedules.schedules.values()
+                      if s.get(CONF_DAY_SET) == ds_id]
+        users += [f"day-set '{d.get(CONF_NAME)}'" for d in day_sets
+                  if d.get(CONF_BASE_DAY_SET) == ds_id]
+        if users:
+            raise ServiceValidationError(
+                f"'{ds_id}' is still used by {', '.join(users)}. Change those first."
+            )
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_DAY_SETS: [d for d in day_sets if d[CONF_ID] != ds_id]}
+        )
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_DAY_SET, async_set_day_set, schema=DAY_SET_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_REMOVE_DAY_SET, async_remove_day_set, schema=REMOVE_DAY_SET_SCHEMA,
+    )
+
     hass.services.async_register(
         DOMAIN, SERVICE_QUERY, async_query, schema=QUERY_SCHEMA,
         supports_response=SupportsResponse.ONLY,
@@ -217,6 +298,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for service in (
                 SERVICE_QUERY, SERVICE_REFRESH, SERVICE_CREATE,
                 SERVICE_EDIT, SERVICE_REMOVE,
+                SERVICE_SET_DAY_SET, SERVICE_REMOVE_DAY_SET,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unloaded

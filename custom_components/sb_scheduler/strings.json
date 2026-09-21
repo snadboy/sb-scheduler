@@ -271,6 +271,39 @@
     "refresh": {
       "name": "Refresh",
       "description": "Recompute every day-set now, instead of waiting for the nightly refresh."
+    },
+    "set_day_set": {
+      "name": "Set day-set",
+      "description": "Create a day-set (no id) or update one (with id). Same fields and same rules as the Configure form; the change is live after a short reload.",
+      "fields": {
+        "id": { "name": "Id", "description": "Leave empty to create; give an existing id to update." },
+        "name": { "name": "Name", "description": "" },
+        "weekdays": { "name": "Weekdays", "description": "List of mon..sun." },
+        "base_day_set": { "name": "Built on", "description": "Id of another day-set to start from." },
+        "base_calendars": { "name": "Calendars", "description": "List of calendar entity ids." },
+        "base_dates": { "name": "Dates", "description": "Single dates and ranges." },
+        "exclude_calendars": { "name": "Cancelled by calendars", "description": "" },
+        "exclude_dates": { "name": "Cancelled by dates", "description": "" },
+        "exclude_match": { "name": "Cancel only when entry matches", "description": "" },
+        "force_calendars": { "name": "Always included by calendars", "description": "" },
+        "force_dates": { "name": "Always included by dates", "description": "" },
+        "force_match": { "name": "Force only when entry matches", "description": "" },
+        "pick": { "name": "Pick", "description": "none, every, or nth_of_month." },
+        "pick_every": { "name": "Every N", "description": "" },
+        "pick_anchor": { "name": "Starting on", "description": "Required for every." },
+        "pick_nth": { "name": "Which one each month", "description": "1-5 or last." },
+        "months": { "name": "Only in months", "description": "List of 1..12." },
+        "invert": { "name": "Invert", "description": "" },
+        "offset_days": { "name": "Shift by days", "description": "" },
+        "expose_calendar": { "name": "Show as calendar", "description": "" }
+      }
+    },
+    "remove_day_set": {
+      "name": "Remove day-set",
+      "description": "Delete a day-set. Refused while any schedule or day-set still depends on it.",
+      "fields": {
+        "id": { "name": "Id", "description": "" }
+      }
     }
   }
 }
