@@ -637,3 +637,41 @@ class DaySet:
         if run_start is not None and prev is not None:
             out.append((run_start, prev))
         return out
+
+
+class NegatedDaySet:
+    """The complement of a day-set, for a schedule with `negate` set.
+
+    Answers the one question the timer asks — the next date on or after a
+    day — with the first date inside the base set's computed window that the
+    base does NOT contain. Reads the base's resolved set directly rather than
+    going through `is_eligible`, whose "beyond the horizon" warning would
+    otherwise fire for every probe past the window.
+    """
+
+    def __init__(self, base: DaySet) -> None:
+        self.base = base
+        self.id = f"not {base.id}"
+        self.name = f"Not {base.name}"
+
+    def is_eligible(self, day: datetime.date) -> bool:
+        w = self.base._window
+        if not w or day < w[0] or day > w[1]:
+            return False
+        return day not in self.base._eligible
+
+    def next_date_on_or_after(self, day: datetime.date) -> datetime.date | None:
+        w = self.base._window
+        if not w:
+            return None
+        cur = max(day, w[0])
+        while cur <= w[1]:
+            if cur not in self.base._eligible:
+                return cur
+            cur += datetime.timedelta(days=1)
+        _LOGGER.error(
+            "Every date from %s to the horizon (%s) is in day-set '%s'; a schedule "
+            "negating it will never run.",
+            day, w[1], self.base.id,
+        )
+        return None

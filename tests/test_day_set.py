@@ -554,6 +554,25 @@ check("collision gets _2", alloc("School Day", {"school_day"}, slug), "school_da
 check("...then _3", alloc("School Day", {"school_day", "school_day_2"}, slug), "school_day_3")
 check("empty name still yields an id", alloc("", set(), slug), "day_set")
 
+print("\nNegatedDaySet — a schedule's `negate` flag, the complement of its day-set")
+NegatedDaySet = _day_set.NegatedDaySet
+wk = DaySet(id="workday", name="Workday", weekdays=MF)
+asyncio.run(wk.async_refresh(nohass, D("2026-09-14"), days=30))
+nwk = NegatedDaySet(wk)
+check("Mon Sep 21 is NOT a non-workday", nwk.is_eligible(D("2026-09-21")), False)
+check("Sat Sep 26 IS", nwk.is_eligible(D("2026-09-26")), True)
+check("next non-workday from Mon Sep 21 = Sat Sep 26", nwk.next_date_on_or_after(D("2026-09-21")), D("2026-09-26"))
+check("next from Sat itself = Sat", nwk.next_date_on_or_after(D("2026-09-26")), D("2026-09-26"))
+check("outside the window is not eligible", nwk.is_eligible(D("2030-01-01")), False)
+check("name reads as the complement", (nwk.id, nwk.name), ("not workday", "Not Workday"))
+every = DaySet(id="daily", name="Daily", weekdays=ALL)
+asyncio.run(every.async_refresh(nohass, D("2026-09-14"), days=30))
+check("negating Daily yields nothing (and logs, not raises)",
+      NegatedDaySet(every).next_date_on_or_after(D("2026-09-21")), None)
+none = DaySet(id="never", name="Never")
+asyncio.run(none.async_refresh(nohass, D("2026-09-14"), days=30))
+check("negating an empty set is every day", NegatedDaySet(none).next_date_on_or_after(D("2026-09-21")), D("2026-09-21"))
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S)")

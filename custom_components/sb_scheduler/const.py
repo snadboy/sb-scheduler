@@ -98,6 +98,10 @@ SIGNAL_SCHEDULES_UPDATED = f"{DOMAIN}_schedules_updated"
 # --- schedules --------------------------------------------------------------
 CONF_SCHEDULE_ID = "schedule_id"
 CONF_DAY_SET = "day_set"
+# Run on every day that is NOT in the day-set. This is the schedule's one
+# transformation of a day-set — it means "Non-workday" no longer needs to
+# exist as its own inverted set (and its own calendar) just to be picked.
+CONF_NEGATE = "negate"
 CONF_PATTERN = "pattern"
 CONF_ENABLED = "enabled"
 CONF_ACTIONS = "actions"

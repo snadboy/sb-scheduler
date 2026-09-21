@@ -23,6 +23,7 @@ from .const import (
     ATTR_NEXT_TRIGGER,
     CONF_ACTIONS,
     CONF_DAY_SET,
+    CONF_NEGATE,
     CONF_ENABLED,
     CONF_PATTERN,
     CONF_SCHEDULE_ID,
@@ -32,6 +33,7 @@ from .const import (
     SIGNAL_DAY_SETS_UPDATED,
     SIGNAL_SCHEDULES_UPDATED,
 )
+from .day_set import NegatedDaySet
 from .timer import describe_times, next_trigger, times_on
 
 _LOGGER = logging.getLogger(__name__)
@@ -133,6 +135,7 @@ class ScheduleEntity(SwitchEntity):
         return {
             CONF_SCHEDULE_ID: self.schedule_id,
             CONF_DAY_SET: schedule.get(CONF_DAY_SET),
+            CONF_NEGATE: bool(schedule.get(CONF_NEGATE)),
             CONF_STEPS: steps,
             # Rollup across steps, so the entity still reads at a glance.
             ATTR_NEXT_TRIGGER: self._next.isoformat() if self._next else None,
@@ -220,6 +223,8 @@ class ScheduleEntity(SwitchEntity):
         if schedule and self.is_on:
             self._sync_handlers()
             day_set = self._data.day_sets.get(schedule.get(CONF_DAY_SET))
+            if day_set is not None and schedule.get(CONF_NEGATE):
+                day_set = NegatedDaySet(day_set)   # "every day NOT in it"
             if day_set is None:
                 # Loud, because the alternative is a schedule that looks armed
                 # and never fires -- the exact upstream failure this replaces.

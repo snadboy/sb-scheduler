@@ -17,6 +17,7 @@ from .const import (
     ATTR_LAST_TRIGGERED,
     CONF_ACTIONS,
     CONF_DAY_SET,
+    CONF_NEGATE,
     CONF_ENABLED,
     CONF_EVERY_MINUTES,
     CONF_OCCURRENCES,
@@ -150,6 +151,7 @@ def normalise_schedule(data: dict) -> dict:
         "name": data.get("name") or "Schedule",
         CONF_ENABLED: bool(data.get(CONF_ENABLED, True)),
         CONF_DAY_SET: data.get(CONF_DAY_SET) or "daily",
+        CONF_NEGATE: bool(data.get(CONF_NEGATE, False)),
         CONF_STEPS: [
             normalise_step(s, i, sid)
             for i, (s, sid) in enumerate(zip(steps, allocate_step_ids(steps)))
