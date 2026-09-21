@@ -332,6 +332,196 @@ check("inverted+offset: day before a NON-trash day",
 check("inverted+offset: 10-02 is the day before non-trash 10-03",
       inv.is_eligible(D("2026-10-02")), True)
 
+# --- derivation: pick, months, base_day_set --------------------------------
+order_by_dependency = _day_set.order_by_dependency
+nohass = FakeHass({})
+ALL = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+MF = ["mon", "tue", "wed", "thu", "fri"]
+
+print("\norder_by_dependency")
+o, bad = order_by_dependency([
+    {"id": "election", "base_day_set": "monday"},
+    {"id": "monday"},
+    {"id": "daily"},
+])
+check("base comes before its user", [c["id"] for c in o].index("monday")
+      < [c["id"] for c in o].index("election"), True)
+check("no unresolved", bad, [])
+o, bad = order_by_dependency([{"id": "a", "base_day_set": "b"}, {"id": "b", "base_day_set": "a"}])
+check("a cycle is reported, not hung", sorted(c["id"] for c in bad), ["a", "b"])
+o, bad = order_by_dependency([{"id": "x", "base_day_set": "ghost"}])
+check("a missing base is reported", [c["id"] for c in bad], ["x"])
+
+print("\npick=every: every Nth ELIGIBLE date from an anchor")
+e3 = DaySet(id="e3", name="Every 3rd day", weekdays=ALL,
+            pick="every", pick_every=3, pick_anchor="2026-09-22")
+asyncio.run(e3.async_refresh(nohass, D("2026-09-01"), days=60))
+check("anchor day fires", e3.is_eligible(D("2026-09-22")), True)
+check("next day does not", e3.is_eligible(D("2026-09-23")), False)
+check("third day fires", e3.is_eligible(D("2026-09-25")), True)
+check("sixth day fires", e3.is_eligible(D("2026-09-28")), True)
+check("nothing BEFORE the anchor", e3.is_eligible(D("2026-09-21")), False)
+
+# "Every other Tuesday" with NO Tuesday day-set: 14 days on Daily.
+eot = DaySet(id="eot", name="Every other Tuesday", weekdays=ALL,
+             pick="every", pick_every=14, pick_anchor="2026-09-22")
+asyncio.run(eot.async_refresh(nohass, D("2026-09-01"), days=60))
+check("Tue Sep 22", eot.is_eligible(D("2026-09-22")), True)
+check("Tue Sep 29 skipped", eot.is_eligible(D("2026-09-29")), False)
+check("Tue Oct 6", eot.is_eligible(D("2026-10-06")), True)
+
+# Anchor that is NOT itself eligible snaps forward to the first that is.
+snap = DaySet(id="snap", name="S", weekdays=["tue"],
+              pick="every", pick_every=2, pick_anchor="2026-09-21")   # a Monday
+asyncio.run(snap.async_refresh(nohass, D("2026-09-01"), days=60))
+check("anchor on a Monday snaps to Tuesday", snap.is_eligible(D("2026-09-22")), True)
+check("then every other", snap.is_eligible(D("2026-09-29")), False)
+check("...", snap.is_eligible(D("2026-10-06")), True)
+
+# The reason to stride over eligible dates: a holiday shift keeps phase.
+trash2 = FakeHass({"calendar.trash": [
+    allday("2026-11-13", "2026-11-14"), allday("2026-11-20", "2026-11-21"),
+    allday("2026-11-28", "2026-11-29", "Trash Day (moved)"),   # Fri -> Sat
+    allday("2026-12-04", "2026-12-05"),
+]})
+eotrash = DaySet(id="et", name="Every other trash day", base_calendars=["calendar.trash"],
+                 pick="every", pick_every=2, pick_anchor="2026-11-13")
+asyncio.run(eotrash.async_refresh(trash2, D("2026-11-01"), days=60))
+check("1st collection", eotrash.is_eligible(D("2026-11-13")), True)
+check("2nd skipped", eotrash.is_eligible(D("2026-11-20")), False)
+check("3rd fires even though it MOVED to Saturday", eotrash.is_eligible(D("2026-11-28")), True)
+check("4th skipped", eotrash.is_eligible(D("2026-12-04")), False)
+
+print("\npick=nth_of_month")
+tue2 = DaySet(id="t2", name="2nd Tuesday", weekdays=["tue"], pick="nth_of_month", pick_nth="2")
+asyncio.run(tue2.async_refresh(nohass, D("2026-09-01"), days=90))
+check("2nd Tue of Sep 2026 = Sep 8", tue2.is_eligible(D("2026-09-08")), True)
+check("1st Tue is not", tue2.is_eligible(D("2026-09-01")), False)
+check("2nd Tue of Oct 2026 = Oct 13", tue2.is_eligible(D("2026-10-13")), True)
+
+lastwd = DaySet(id="lw", name="Last weekday", weekdays=MF, pick="nth_of_month", pick_nth="last")
+asyncio.run(lastwd.async_refresh(nohass, D("2026-09-01"), days=90))
+check("last weekday of Sep 2026 = Wed Sep 30", lastwd.is_eligible(D("2026-09-30")), True)
+check("last weekday of Oct 2026 = Fri Oct 30 (31st is Sat)", lastwd.is_eligible(D("2026-10-30")), True)
+check("Oct 29 is not", lastwd.is_eligible(D("2026-10-29")), False)
+
+# A month cut by the window edge must NOT yield a wrong "first".
+part = DaySet(id="p", name="1st Tue", weekdays=["tue"], pick="nth_of_month", pick_nth="1")
+asyncio.run(part.async_refresh(nohass, D("2026-09-15"), days=60))
+check("partial Sep yields no pick (Sep 1 is outside the window)",
+      any(part.is_eligible(D(f"2026-09-{d:02d}")) for d in range(15, 31)), False)
+check("full Oct picks Oct 6", part.is_eligible(D("2026-10-06")), True)
+
+print("\nmonths filter")
+novmon = DaySet(id="nm", name="Nov Mondays", weekdays=["mon"], months=[11])
+asyncio.run(novmon.async_refresh(nohass, D("2026-10-01"), days=90))
+check("a November Monday", novmon.is_eligible(D("2026-11-02")), True)
+check("an October Monday is filtered", novmon.is_eligible(D("2026-10-05")), False)
+check("months accepts strings from the form",
+      DaySet.from_config({"id": "m", "name": "M", "months": ["11", "1"]}).months, [1, 11])
+
+print("\nbase_day_set: composition via a resolved base set")
+monday = DaySet(id="monday", name="Monday", weekdays=["mon"])
+asyncio.run(monday.async_refresh(nohass, D("2026-01-01"), days=1100))
+derived = DaySet(id="d", name="D", base_day_set="monday", pick="nth_of_month", pick_nth="1")
+asyncio.run(derived.async_refresh(nohass, D("2026-01-01"), days=1100, base_set=monday._eligible))
+check("first Monday of Sep 2026 = Sep 7", derived.is_eligible(D("2026-09-07")), True)
+check("Sep 14 is not", derived.is_eligible(D("2026-09-14")), False)
+
+# THE acceptance test: Election Day = day after the first Monday of November.
+print("\nacceptance: Election Day = Monday -> 1st of month -> Nov -> +1")
+election = DaySet(id="election_day", name="Election Day", base_day_set="monday",
+                  pick="nth_of_month", pick_nth="1", months=[11], offset_days=1,
+                  expose_calendar=False)
+asyncio.run(election.async_refresh(nohass, D("2026-01-01"), days=1100, base_set=monday._eligible))
+check("2026: Tue Nov 3", election.is_eligible(D("2026-11-03")), True)
+check("2027: Tue Nov 2 (Nov 1 is a Monday)", election.is_eligible(D("2027-11-02")), True)
+check("2028: Tue Nov 7", election.is_eligible(D("2028-11-07")), True)
+check("not the Monday itself", election.is_eligible(D("2026-11-02")), False)
+check("not the second Tuesday", election.is_eligible(D("2026-11-10")), False)
+check("nothing outside November",
+      any(election.is_eligible(D(f"2026-{m:02d}-01") + datetime.timedelta(days=k))
+          for m in (1, 4, 7, 10) for k in range(28)), False)
+check("exactly one date per year",
+      sum(1 for k in range(366) if election.is_eligible(D("2027-01-01") + datetime.timedelta(days=k))), 1)
+check("next from Sep 21 2026 is Nov 3", election.next_date_on_or_after(D("2026-09-21")), D("2026-11-03"))
+check("calendar opt-out is read", election.expose_calendar, False)
+check("default keeps the calendar", monday.expose_calendar, True)
+check("describe_pick", election.describe_pick(), "1st of the month")
+
+print("\nboot race: a source calendar that does not exist yet")
+
+
+class LateHass(FakeHass):
+    """Like FakeHass, but with a `states` registry that knows only some
+    entities — the shape of HA during startup, before trash_day has created
+    its calendar. get_events on an unknown entity would raise in real HA."""
+
+    def __init__(self, events_by_entity, existing):
+        super().__init__(events_by_entity)
+        self.states = self
+        self._existing = set(existing)
+        self.calls = []
+
+    def get(self, entity_id):
+        return object() if entity_id in self._existing else None
+
+    async def async_call(self, domain, service, data, blocking=False, return_response=False):
+        self.calls.append(data["entity_id"])
+        if data["entity_id"] not in self._existing:
+            raise RuntimeError("Service call requested response data but did not match any entities")
+        return await super().async_call(domain, service, data, blocking, return_response)
+
+
+late = LateHass({"calendar.trash": [allday("2026-10-02", "2026-10-03")]}, existing=[])
+early = DaySet(id="t", name="Trash Day", base_calendars=["calendar.trash"])
+asyncio.run(early.async_refresh(late, D("2026-10-01"), days=30))
+check("a missing source is skipped, not called", late.calls, [])
+check("...and remembered", early._missing_sources, ["calendar.trash"])
+check("the set is empty for now", early.is_eligible(D("2026-10-02")), False)
+check("next date is None without raising", early.next_date_on_or_after(D("2026-10-01")), None)
+
+late._existing.add("calendar.trash")          # the entity appears
+asyncio.run(early.async_refresh(late, D("2026-10-01"), days=30))
+check("once present it is read", late.calls, ["calendar.trash"])
+check("...and the set fills in", early.is_eligible(D("2026-10-02")), True)
+check("nothing is missing any more", early._missing_sources, [])
+
+# The second boot shape: the entity HAS a state, but its platform cannot serve
+# it yet, so get_events raises "did not match any entities". That is what the
+# first fix missed — it must count as missing, not as empty-with-a-traceback.
+
+
+class HalfUpHass(LateHass):
+    def get(self, entity_id):
+        return object()                         # state exists…
+
+    async def async_call(self, domain, service, data, blocking=False, return_response=False):
+        self.calls.append(data["entity_id"])
+        if data["entity_id"] not in self._existing:   # …but the service can't see it
+            raise RuntimeError("Service call requested response data but did not match any entities")
+        return await FakeHass.async_call(self, domain, service, data, blocking, return_response)
+
+
+half = HalfUpHass({"calendar.trash": [allday("2026-10-02", "2026-10-03")]}, existing=[])
+mid = DaySet(id="t", name="Trash Day", base_calendars=["calendar.trash"])
+asyncio.run(mid.async_refresh(half, D("2026-10-01"), days=30))
+check("a present-but-unserviceable source is attempted", half.calls, ["calendar.trash"])
+check("...and counted as missing, not empty", mid._missing_sources, ["calendar.trash"])
+check("no date yet, no exception", mid.next_date_on_or_after(D("2026-10-01")), None)
+half._existing.add("calendar.trash")
+asyncio.run(mid.async_refresh(half, D("2026-10-01"), days=30))
+check("the retry fills it in", mid.is_eligible(D("2026-10-02")), True)
+check("...and clears missing", mid._missing_sources, [])
+
+# A genuinely broken calendar is still an error, not "missing".
+class BrokenHass(LateHass):
+    def get(self, entity_id): return object()
+    async def async_call(self, *a, **k): raise RuntimeError("boom")
+broken = DaySet(id="b", name="B", base_calendars=["calendar.x"])
+asyncio.run(broken.async_refresh(BrokenHass({}, existing=["calendar.x"]), D("2026-10-01"), days=30))
+check("an unrelated failure is NOT treated as missing", broken._missing_sources, [])
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S)")

@@ -10,9 +10,11 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.util import slugify
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    DateSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -29,21 +31,32 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_BASE_CALENDARS,
     CONF_BASE_DATES,
+    CONF_BASE_DAY_SET,
     CONF_DAY_SETS,
     CONF_EXCLUDE_CALENDARS,
     CONF_EXCLUDE_DATES,
     CONF_EXCLUDE_MATCH,
+    CONF_EXPOSE_CALENDAR,
     CONF_FORCE_CALENDARS,
     CONF_FORCE_DATES,
     CONF_FORCE_MATCH,
     CONF_ID,
     CONF_INVERT,
+    CONF_MONTHS,
     CONF_NAME,
     CONF_OFFSET_DAYS,
+    CONF_PICK,
+    CONF_PICK_ANCHOR,
+    CONF_PICK_EVERY,
+    CONF_PICK_NTH,
     CONF_WEEKDAYS,
     CONF_WORKDAY_CALENDAR,
     DOMAIN,
     MAX_OFFSET_DAYS,
+    PICK_EVERY,
+    PICK_NONE,
+    PICK_NTH_OF_MONTH,
+    PICK_NTH_OPTIONS,
     WEEKDAYS,
 )
 from .day_set import InvalidDateSpec, parse_date_spec
@@ -66,61 +79,176 @@ OFFSET = NumberSelector(
         mode=NumberSelectorMode.BOX,
     )
 )
+EVERY = NumberSelector(
+    NumberSelectorConfig(min=1, max=366, step=1, mode=NumberSelectorMode.BOX)
+)
+PICK_SELECT = SelectSelector(
+    SelectSelectorConfig(
+        options=[PICK_NONE, PICK_EVERY, PICK_NTH_OF_MONTH],
+        mode=SelectSelectorMode.DROPDOWN, translation_key="pick",
+    )
+)
+NTH_SELECT = SelectSelector(
+    SelectSelectorConfig(
+        options=PICK_NTH_OPTIONS, mode=SelectSelectorMode.DROPDOWN,
+        translation_key="pick_nth",
+    )
+)
+MONTHS_SELECT = SelectSelector(
+    SelectSelectorConfig(
+        options=[str(m) for m in range(1, 13)], multiple=True,
+        mode=SelectSelectorMode.DROPDOWN, translation_key="months",
+    )
+)
+ANCHOR = DateSelector()
+
+# The dropdown needs a "none" entry; the stored value for none is "".
+NO_BASE = "__none__"
+
+# The form is FIVE collapsible sections, because twenty flat fields is a wall.
+# Stored config stays flat; these lists are what flatten() folds back in.
+SECTIONS: dict[str, list[str]] = {
+    "sources": [CONF_WEEKDAYS, CONF_BASE_DAY_SET, CONF_BASE_CALENDARS, CONF_BASE_DATES],
+    "cancelled": [CONF_EXCLUDE_CALENDARS, CONF_EXCLUDE_DATES, CONF_EXCLUDE_MATCH],
+    "always": [CONF_FORCE_CALENDARS, CONF_FORCE_DATES, CONF_FORCE_MATCH],
+    "pick": [CONF_PICK, CONF_PICK_EVERY, CONF_PICK_ANCHOR, CONF_PICK_NTH, CONF_MONTHS],
+    "advanced": [CONF_INVERT, CONF_OFFSET_DAYS, CONF_EXPOSE_CALENDAR],
+}
 
 
-def day_set_schema(defaults: dict | None = None) -> vol.Schema:
+def flatten(user_input: dict) -> dict:
+    """Fold a sectioned form submission into the flat shape that is stored."""
+    flat: dict = {CONF_NAME: user_input.get(CONF_NAME, "")}
+    for sec in SECTIONS:
+        flat.update(user_input.get(sec) or {})
+    if flat.get(CONF_BASE_DAY_SET) == NO_BASE:
+        flat[CONF_BASE_DAY_SET] = ""
+    for key in (CONF_PICK_EVERY, CONF_OFFSET_DAYS):
+        if key in flat and flat[key] is not None:
+            flat[key] = int(flat[key])
+    return flat
+
+
+def day_set_schema(defaults: dict | None, others: list[dict]) -> vol.Schema:
     """The one form used for both add and edit.
 
-    Grouped by tier: BASE (what is eligible), then EXCLUDED (what cancels it),
-    then ALWAYS (what overrides a cancellation). Order matters -- it reads as
-    the precedence chain, which is otherwise easy to get backwards.
+    Sections read as the precedence chain -- SOURCES (what is eligible), then
+    CANCELLED, then ALWAYS -- followed by PICK (cadence / ordinal / months)
+    and ADVANCED. A section starts collapsed unless it already holds a value,
+    so an existing day-set opens showing exactly what it uses.
+
+    `others` are the day-sets this one may build on (never itself).
     """
     d = defaults or {}
     # Legacy config used include_* for what is now the base tier.
     base_cals = d.get(CONF_BASE_CALENDARS, d.get("include_calendars", []))
     base_dates = d.get(CONF_BASE_DATES, d.get("include_dates", ""))
+
+    def has(*keys) -> bool:
+        return any(d.get(k) for k in keys)
+
+    base_picker = SelectSelector(
+        SelectSelectorConfig(
+            options=[{"value": NO_BASE, "label": "—"}]
+            + [{"value": o[CONF_ID], "label": o[CONF_NAME]} for o in others],
+            mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+    sources = {
+        vol.Optional(CONF_WEEKDAYS, default=d.get(CONF_WEEKDAYS, [])): WEEKDAY_PICKER,
+        vol.Optional(
+            CONF_BASE_DAY_SET, default=d.get(CONF_BASE_DAY_SET) or NO_BASE
+        ): base_picker,
+        vol.Optional(CONF_BASE_CALENDARS, default=base_cals): CALENDARS,
+        vol.Optional(CONF_BASE_DATES, default=base_dates): DATES,
+    }
+    cancelled = {
+        vol.Optional(
+            CONF_EXCLUDE_CALENDARS, default=d.get(CONF_EXCLUDE_CALENDARS, [])
+        ): CALENDARS,
+        vol.Optional(CONF_EXCLUDE_DATES, default=d.get(CONF_EXCLUDE_DATES, "")): DATES,
+        vol.Optional(CONF_EXCLUDE_MATCH, default=d.get(CONF_EXCLUDE_MATCH, "")): TEXT,
+    }
+    always = {
+        vol.Optional(
+            CONF_FORCE_CALENDARS, default=d.get(CONF_FORCE_CALENDARS, [])
+        ): CALENDARS,
+        vol.Optional(CONF_FORCE_DATES, default=d.get(CONF_FORCE_DATES, "")): DATES,
+        vol.Optional(CONF_FORCE_MATCH, default=d.get(CONF_FORCE_MATCH, "")): TEXT,
+    }
+    # A DateSelector rejects "" as a default, so the anchor only gets one
+    # when there is a real date to show.
+    anchor_key = (
+        vol.Optional(CONF_PICK_ANCHOR, default=d[CONF_PICK_ANCHOR])
+        if d.get(CONF_PICK_ANCHOR) else vol.Optional(CONF_PICK_ANCHOR)
+    )
+    pick = {
+        vol.Optional(CONF_PICK, default=d.get(CONF_PICK) or PICK_NONE): PICK_SELECT,
+        vol.Optional(CONF_PICK_EVERY, default=d.get(CONF_PICK_EVERY) or 2): EVERY,
+        anchor_key: ANCHOR,
+        vol.Optional(CONF_PICK_NTH, default=str(d.get(CONF_PICK_NTH) or "1")): NTH_SELECT,
+        vol.Optional(
+            CONF_MONTHS, default=[str(m) for m in (d.get(CONF_MONTHS) or [])]
+        ): MONTHS_SELECT,
+    }
+    advanced = {
+        vol.Optional(CONF_INVERT, default=d.get(CONF_INVERT, False)): BooleanSelector(),
+        vol.Optional(CONF_OFFSET_DAYS, default=d.get(CONF_OFFSET_DAYS, 0)): OFFSET,
+        vol.Optional(
+            CONF_EXPOSE_CALENDAR, default=d.get(CONF_EXPOSE_CALENDAR, True)
+        ): BooleanSelector(),
+    }
+
+    picking = (d.get(CONF_PICK) or PICK_NONE) != PICK_NONE or has(CONF_MONTHS)
+    tweaked = has(CONF_INVERT, CONF_OFFSET_DAYS) or d.get(CONF_EXPOSE_CALENDAR) is False
     return vol.Schema(
         {
             vol.Required(CONF_NAME, default=d.get(CONF_NAME, "")): str,
-            vol.Optional(
-                CONF_WEEKDAYS, default=d.get(CONF_WEEKDAYS, [])
-            ): WEEKDAY_PICKER,
-            vol.Optional(CONF_BASE_CALENDARS, default=base_cals): CALENDARS,
-            vol.Optional(CONF_BASE_DATES, default=base_dates): DATES,
-            vol.Optional(
-                CONF_EXCLUDE_CALENDARS, default=d.get(CONF_EXCLUDE_CALENDARS, [])
-            ): CALENDARS,
-            vol.Optional(
-                CONF_EXCLUDE_DATES, default=d.get(CONF_EXCLUDE_DATES, "")
-            ): DATES,
-            vol.Optional(
-                CONF_EXCLUDE_MATCH, default=d.get(CONF_EXCLUDE_MATCH, "")
-            ): TEXT,
-            vol.Optional(
-                CONF_FORCE_CALENDARS, default=d.get(CONF_FORCE_CALENDARS, [])
-            ): CALENDARS,
-            vol.Optional(
-                CONF_FORCE_DATES, default=d.get(CONF_FORCE_DATES, "")
-            ): DATES,
-            vol.Optional(
-                CONF_FORCE_MATCH, default=d.get(CONF_FORCE_MATCH, "")
-            ): TEXT,
-            vol.Optional(CONF_INVERT, default=d.get(CONF_INVERT, False)): BooleanSelector(),
-            vol.Optional(
-                CONF_OFFSET_DAYS, default=d.get(CONF_OFFSET_DAYS, 0)
-            ): OFFSET,
+            vol.Required("sources"): section(vol.Schema(sources), {"collapsed": False}),
+            vol.Required("cancelled"): section(
+                vol.Schema(cancelled),
+                {"collapsed": not has(CONF_EXCLUDE_CALENDARS, CONF_EXCLUDE_DATES)},
+            ),
+            vol.Required("always"): section(
+                vol.Schema(always),
+                {"collapsed": not has(CONF_FORCE_CALENDARS, CONF_FORCE_DATES)},
+            ),
+            vol.Required("pick"): section(vol.Schema(pick), {"collapsed": not picking}),
+            vol.Required("advanced"): section(vol.Schema(advanced), {"collapsed": not tweaked}),
         }
     )
 
 
-def _validate_dates(user_input: dict) -> dict[str, str]:
-    """Hand-typed dates are the most likely thing to be wrong. Say which."""
+def _validate(flat: dict, day_sets: list[dict], editing: str | None) -> dict[str, str]:
+    """What can be wrong: unreadable dates, a stride with no anchor, a base
+    that is missing, is this very day-set, or leads back to it."""
     errors: dict[str, str] = {}
     for key in (CONF_BASE_DATES, CONF_EXCLUDE_DATES, CONF_FORCE_DATES):
         try:
-            parse_date_spec(user_input.get(key) or "")
+            parse_date_spec(flat.get(key) or "")
         except InvalidDateSpec:
             errors[key] = "invalid_dates"
+            errors.setdefault("base", "invalid_dates")
+
+    if flat.get(CONF_PICK) == PICK_EVERY and not flat.get(CONF_PICK_ANCHOR):
+        errors["base"] = "anchor_required"
+
+    base = flat.get(CONF_BASE_DAY_SET) or ""
+    if base:
+        by_id = {d[CONF_ID]: d for d in day_sets}
+        seen: set[str] = set()
+        cur = base
+        while cur:
+            if cur == editing or cur in seen:
+                errors["base"] = "base_cycle"
+                break
+            cfg = by_id.get(cur)
+            if cfg is None:
+                errors["base"] = "base_missing"
+                break
+            seen.add(cur)
+            cur = cfg.get(CONF_BASE_DAY_SET) or ""
     return errors
 
 
@@ -236,14 +364,18 @@ class SbSchedulerOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_add(self, user_input=None):
         errors: dict[str, str] = {}
+        flat: dict | None = None
         if user_input is not None:
-            errors = _validate_dates(user_input)
+            flat = flatten(user_input)
+            errors = _validate(flat, self._day_sets, None)
             if not errors:
-                new = dict(user_input)
-                new[CONF_ID] = self._new_id(user_input[CONF_NAME])
+                new = dict(flat)
+                new[CONF_ID] = self._new_id(flat[CONF_NAME])
                 return self._save([*self._day_sets, new])
         return self.async_show_form(
-            step_id="add", data_schema=day_set_schema(user_input), errors=errors
+            step_id="add",
+            data_schema=day_set_schema(flat, self._day_sets),
+            errors=errors,
         )
 
     # --- edit --------------------------------------------------------------
@@ -263,10 +395,13 @@ class SbSchedulerOptionsFlow(config_entries.OptionsFlow):
             return self.async_abort(reason="unknown_day_set")
 
         errors: dict[str, str] = {}
+        flat: dict | None = None
+        others = [d for d in self._day_sets if d[CONF_ID] != self._editing]
         if user_input is not None:
-            errors = _validate_dates(user_input)
+            flat = flatten(user_input)
+            errors = _validate(flat, self._day_sets, self._editing)
             if not errors:
-                updated = {**current, **user_input}
+                updated = {**current, **flat}
                 return self._save(
                     [
                         updated if d[CONF_ID] == self._editing else d
@@ -275,7 +410,7 @@ class SbSchedulerOptionsFlow(config_entries.OptionsFlow):
                 )
         return self.async_show_form(
             step_id="edit",
-            data_schema=day_set_schema(user_input or current),
+            data_schema=day_set_schema(flat or current, others),
             errors=errors,
             description_placeholders={"name": current[CONF_NAME]},
         )

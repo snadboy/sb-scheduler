@@ -37,6 +37,55 @@ five schedules became four.
   silently never fires. An id an earlier step already claimed is reallocated
   for the same reason. The card relies on this: it saves new steps with NO id.
 
+## Derived day-sets (2026-09-21) — see DESIGN.md for the model
+
+`base_day_set` + `pick` (`every` N from anchor / `nth_of_month` 1–5, last) +
+`months` + `expose_calendar`. Evaluation: base → tiers → pick → months →
+invert → offset. Acceptance case is Election Day (Mon → 1st of month → Nov →
++1), in `tests/test_day_set.py`.
+
+- **A day-set without a calendar is invisible to the old card.** The card
+  discovered day-sets by scanning `calendar.*` for `day_set_id`. That is why
+  `sensor.py` exists: one roster sensor (`roster: sb_scheduler`, `day_sets:
+  [...]`) that the card (≥ 0.9.5) reads first. Keep the roster attribute shape
+  stable — the card depends on it.
+- **`_purge_orphaned_entities` must treat a calendar-off day-set as invalid**
+  or its old calendar entity lingers `restored`. And the roster sensor's
+  unique_id must be in the valid set, or the purge deletes it on restart —
+  the same trap as the schedule switches.
+- **The options form uses `section()`; submissions arrive NESTED.** Every
+  step must `flatten()` before validating or saving. Errors go under `"base"`
+  (form-level); a section named `base` would collide with that, which is why
+  the first section is called `sources`.
+- **`DateSelector` rejects `""` as a default.** The anchor field only gets a
+  default when a real date exists.
+- **`SelectSelector` needs an explicit none option** for the base picker —
+  `NO_BASE = "__none__"`, mapped back to `""` in `flatten()`.
+- Months are stored as the strings the form emits (`"11"`); `from_config`
+  accepts ints too.
+
+**Boot race (found 2026-09-21, probably always there).** sb_scheduler can set
+up ~10 s into boot, before `trash_day` / `workday` have created their
+calendars. `calendar.get_events` then raises *"Service call requested response
+data but did not match any entities"*, every calendar-backed day-set computed
+EMPTY, and the log filled with tracebacks plus "no eligible date … nothing will
+be scheduled". It always self-healed — the registry's source-change listener
+fires when the entity appears and recomputes — but it looked like an outage
+and briefly armed schedules against nothing.
+
+It has TWO shapes, and the first fix only caught one. (1) The entity does not
+exist: `collect()` skips it. (2) **The entity has a state but its platform
+cannot serve it yet** — the state-change listener fires on that first state
+write, we query, and `get_events` STILL raises "did not match any entities".
+So that specific failure is treated as not-ready too (`_calendar_dates`
+returns `None`), both land in `_missing_sources`, `next_date_on_or_after`
+logs a WARNING "waiting for …" rather than the ERROR, and the registry arms a
+one-shot `async_call_later` retry (`MISSING_SOURCE_RETRY_SECONDS`) so
+convergence never depends on the source emitting another state change. Any
+OTHER exception from a calendar is still logged as an error, not swallowed.
+A plain entry reload never hits this; only boot does. Tests: `LateHass`,
+`HalfUpHass`, `BrokenHass` in `tests/test_day_set.py`.
+
 ## Where things are
 
 - `custom_components/sb_scheduler/` — the live integration: day-sets (Phase 0)

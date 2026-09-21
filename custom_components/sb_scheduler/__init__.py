@@ -35,7 +35,7 @@ from .schedule_store import ScheduleStore
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["calendar", "switch"]
+PLATFORMS = ["calendar", "switch", "sensor"]
 
 SERVICE_QUERY = "query_day_set"
 SERVICE_REFRESH = "refresh"
@@ -113,10 +113,18 @@ def _purge_orphaned_entities(
     delete every schedule switch on the next restart.
     """
     entity_registry = er.async_get(hass)
-    valid = {f"{entry.entry_id}_{ds_id}" for ds_id in data.day_sets.day_sets}
+    # A day-set that has switched its calendar OFF must drop the entity too —
+    # otherwise it lingers as a `restored` orphan, which is the exact symptom
+    # the ha-orphans skill exists to chase.
+    valid = {
+        f"{entry.entry_id}_{ds.id}"
+        for ds in data.day_sets.day_sets.values()
+        if ds.expose_calendar
+    }
     valid |= {
         f"{entry.entry_id}_schedule_{sid}" for sid in data.schedules.schedules
     }
+    valid.add(f"{entry.entry_id}_day_sets")   # the roster sensor
     for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
         if entity.unique_id not in valid:
             _LOGGER.debug("Removing orphaned entity %s", entity.entity_id)

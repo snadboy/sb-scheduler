@@ -34,6 +34,42 @@ CONF_EXCLUDE_MATCH = "exclude_match"
 CONF_INCLUDE_CALENDARS = "include_calendars"
 CONF_INCLUDE_DATES = "include_dates"
 
+# A day-set can be BUILT ON another day-set instead of (or as well as) a mask
+# and calendars. That is what keeps "every other Tuesday" and "Election Day"
+# from each needing their own calendar source: they derive from Tuesday and
+# Monday. Evaluated in dependency order; a cycle is an error, not a hang.
+CONF_BASE_DAY_SET = "base_day_set"
+
+# PICK narrows the eligible dates to a cadence or an ordinal:
+#   none          — every eligible date (the default, and the old behaviour)
+#   every         — every Nth eligible date, counting from an anchor date
+#   nth_of_month  — the Nth (or last) eligible date of each calendar month
+# Both stride over ELIGIBLE dates, not calendar days, so "every other trash
+# day" follows a holiday shift and "last workday of the month" is holiday-aware.
+CONF_PICK = "pick"
+PICK_NONE = "none"
+PICK_EVERY = "every"
+PICK_NTH_OF_MONTH = "nth_of_month"
+CONF_PICK_EVERY = "pick_every"
+CONF_PICK_ANCHOR = "pick_anchor"
+CONF_PICK_NTH = "pick_nth"
+PICK_NTH_LAST = "last"
+PICK_NTH_OPTIONS = ["1", "2", "3", "4", "5", PICK_NTH_LAST]
+
+# Keep only dates in these months (1-12). Applied after pick and before
+# invert, which is what makes "first Monday of November" come out right
+# rather than "first Monday among November's Mondays" (same thing) or
+# "first Monday of the year that lands in November" (not).
+CONF_MONTHS = "months"
+
+# The calendar entity is what a derived set does NOT need — nobody wants a
+# calendar per special case. Default on so nothing existing changes.
+CONF_EXPOSE_CALENDAR = "expose_calendar"
+
+# An "every N" anchor can be older than PAST_DAYS. The window is extended back
+# to the anchor so the stride can be counted from it, but not without limit.
+MAX_ANCHOR_AGE_DAYS = 3 * 366
+
 WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 # How far ahead eligibility is precomputed. Generous on purpose: a school-year
@@ -50,6 +86,11 @@ PAST_DAYS = 45
 # Refresh the window shortly after midnight, so "today" is always in range.
 REFRESH_HOUR = 0
 REFRESH_MINUTE = 5
+
+# When a refresh finds a source calendar not created or not serviceable yet
+# (boot ordering), try again this many seconds later — deterministically,
+# rather than hoping the source emits another state change.
+MISSING_SOURCE_RETRY_SECONDS = 20
 
 SIGNAL_DAY_SETS_UPDATED = f"{DOMAIN}_day_sets_updated"
 SIGNAL_SCHEDULES_UPDATED = f"{DOMAIN}_schedules_updated"

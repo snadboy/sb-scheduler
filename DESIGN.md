@@ -353,6 +353,64 @@ The holiday shift compounds correctly and for free: when Trash Day moves from
 Fri 2026-11-27 to Sat 11-28 for Thanksgiving, Trash Day Eve moves from Thu to
 Fri with it.
 
+## Derived day-sets: base, pick, months, optional calendar (2026-09-21)
+
+The question that forced this: *"every other Tuesday, every third day, first
+weekday of the month, day after the first Monday of November"*. None of those
+are expressible by a mask plus calendars. They are **transformations of a set
+of dates**, and once there are several that must compose (Election Day uses
+three), they belong in day-sets — the thing that already answers "which
+dates" — not on the schedule, where they would be duplicated per schedule and
+could never be named or reused.
+
+A day-set therefore gained, in evaluation order:
+
+| Stage | Knob | Notes |
+|---|---|---|
+| base | `base_day_set` | build on another day-set's resolved dates, alongside mask/calendars/dates |
+| tiers | force > veto > base | unchanged |
+| **pick** | `pick` = `every` (N, anchor) or `nth_of_month` (1–5, last) | strides over **eligible** dates, not calendar days |
+| **months** | `months` | keep only these months |
+| invert | unchanged | after pick, so "NOT the first Monday" means what it says |
+| offset | unchanged, still last | so "day before the first Monday of January" may land in December |
+
+`expose_calendar` (default on) is the answer to "no calendar device per
+special case": a derived set simply opts out. The card discovers day-sets from
+a single **roster sensor** now, not from calendar entities.
+
+Election Day = base Monday → pick 1st of month → months [11] → offset +1.
+Resolves to 2026-11-03, 2027-11-02, 2028-11-07; offline test.
+
+**Why stride over eligible dates.** "Every N days" cannot express "every other
+workday" (unevenly spaced), and "every other trash day" must keep its phase
+when Thanksgiving pushes a collection from Friday to Saturday — the count is
+unchanged, only the date moved. The cost, stated honestly: inserting or
+removing a date in a calendar-backed base re-phases everything after it. A
+holiday *shift* does not; an *insertion* does. Mask-only bases can never
+re-phase.
+
+**Anchor aging.** Day-sets compute 45 days into the past. An `every` anchor
+older than that cannot be counted from, so the registry pulls the window start
+back to the oldest anchor — capped at `MAX_ANCHOR_AGE_DAYS` (3 years), past
+which it warns and counts from the cap.
+
+**Nth-of-month only picks from months fully inside the window.** A month cut
+by the window edge cannot say which date was truly first or last, and a wrong
+"first Monday" is worse than none. With PAST_DAYS = 45 the current month is
+always whole.
+
+**Dependency order.** `base_day_set` chains are sorted topologically at
+registry construction (`order_by_dependency`, pure, tested). A missing base
+or a cycle is an ERROR in the log and the set evaluates with an empty base —
+never a hang, never a silent nothing. The options flow refuses to save a
+cycle in the first place.
+
+**The form.** Twenty flat fields was a wall, so the options flow is five
+collapsible `section()`s — Sources, Cancelled, Always, Pick, Advanced — each
+opening expanded only when it holds a value. Storage stays flat; `flatten()`
+folds a submission back. This is the "capability first, card editing later"
+call: day-set editing inside the card is a separate phase.
+
 ## Open questions
 
 - Whether day-sets should be shareable across config entries or scoped to one.

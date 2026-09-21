@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "SB Scheduler",
-        "description": "Day-sets are named groups of dates \u2014 Workday, School Day, Trash Day \u2014 that schedules can run against. Pick a workday calendar and Workday and Non-workday are created for you; add a days-off calendar too and time off will cancel a workday, while an entry titled \"Workday\" reinstates one.\n\nThe Workday integration publishes a workday calendar (typically calendar.workday_sensor_us_calendar). Leave both empty to start with just Daily and Weekend.",
+        "description": "Day-sets are named groups of dates — Workday, School Day, Trash Day — that schedules can run against. Pick a workday calendar and Workday and Non-workday are created for you; add a days-off calendar too and time off will cancel a workday, while an entry titled \"Workday\" reinstates one.\n\nThe Workday integration publishes a workday calendar (typically calendar.workday_sensor_us_calendar). Leave both empty to start with just Daily and Weekend.",
         "data": {
           "workday_calendar": "Workday calendar (optional)",
           "days_off_calendar": "Days-off calendar (optional)"
@@ -27,60 +27,160 @@
       },
       "add": {
         "title": "Add a day-set",
-        "description": "A day-set is a named group of dates, built in three tiers:\n\n1. **Base** \u2014 the weekdays and calendars it is made of\n2. **Cancelled** \u2014 what takes a day back out\n3. **Always** \u2014 what overrides a cancellation\n\nDates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+        "description": "A day-set is a named group of dates. Start from weekdays, calendars, typed dates, or another day-set; then optionally narrow it to a cadence or an ordinal.\n\nPrecedence is Always › Cancelled › Sources. Dates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
         "data": {
-          "name": "Name",
-          "weekdays": "Weekdays it can fall on",
-          "base_calendars": "Days come from these calendars",
-          "base_dates": "\u2026and these dates",
-          "exclude_calendars": "Cancelled by these calendars",
-          "exclude_dates": "\u2026and these dates",
-          "exclude_match": "Only cancel when the entry matches",
-          "force_calendars": "Always included by these calendars",
-          "force_dates": "\u2026and these dates",
-          "force_match": "Only force when the entry matches",
-          "invert": "Invert (every date NOT in this set)",
-          "offset_days": "Shift by (days)"
+          "name": "Name"
         },
-        "data_description": {
-          "weekdays": "The base tier, together with the calendars below. Leave empty if the day-set comes entirely from a calendar, such as Trash Day.",
-          "base_calendars": "What this day-set is made of \u2014 e.g. the Workday integration's calendar.",
-          "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17",
-          "exclude_calendars": "These cancel a day \u2014 e.g. a days-off calendar for time off.",
-          "exclude_match": "Optional text matched against an event's title or description, so only some entries cancel. Leave empty to cancel on any entry.",
-          "force_calendars": "These win over everything, including the cancellations above.",
-          "force_match": "Optional text matched against an event's title or description \u2014 e.g. \"Workday\" so only a days-off entry named that reinstates a workday.",
-          "invert": "Turns Workday into Non-workday without configuring it twice.",
-          "offset_days": "Moves every date in the set. -1 gives \"the night before\" \u2014 e.g. a Trash Day Eve set for putting the bins out. Applied last, so it is always this set, moved."
+        "sections": {
+          "sources": {
+            "name": "Sources — where the dates come from",
+            "description": "Any of these, combined.",
+            "data": {
+              "weekdays": "Weekdays",
+              "base_day_set": "Built on another day-set",
+              "base_calendars": "Calendars",
+              "base_dates": "Dates"
+            },
+            "data_description": {
+              "weekdays": "Leave empty if the day-set comes entirely from a calendar or another day-set.",
+              "base_day_set": "Start from that day-set's dates — e.g. Monday, to build \"first Monday of the month\" without a calendar.",
+              "base_calendars": "e.g. the Workday integration's calendar, or the trash-collection calendar.",
+              "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17"
+            }
+          },
+          "cancelled": {
+            "name": "Cancelled — what takes a day back out",
+            "data": {
+              "exclude_calendars": "Cancelled by these calendars",
+              "exclude_dates": "…and these dates",
+              "exclude_match": "Only cancel when the entry matches"
+            },
+            "data_description": {
+              "exclude_calendars": "e.g. a days-off calendar for time off.",
+              "exclude_match": "Optional text matched against an event's title or description. Leave empty to cancel on any entry."
+            }
+          },
+          "always": {
+            "name": "Always — what overrides a cancellation",
+            "data": {
+              "force_calendars": "Always included by these calendars",
+              "force_dates": "…and these dates",
+              "force_match": "Only force when the entry matches"
+            },
+            "data_description": {
+              "force_calendars": "These win over everything, including the cancellations above.",
+              "force_match": "e.g. \"Workday\", so only a days-off entry named that reinstates a workday."
+            }
+          },
+          "pick": {
+            "name": "Pick — narrow to a cadence, an ordinal, or certain months",
+            "description": "Both kinds of pick count ELIGIBLE dates, not calendar days: \"every other trash day\" follows a holiday shift, and \"last workday of the month\" is holiday-aware.",
+            "data": {
+              "pick": "Pick",
+              "pick_every": "Every N",
+              "pick_anchor": "Starting on",
+              "pick_nth": "Which one each month",
+              "months": "Only in these months"
+            },
+            "data_description": {
+              "pick_every": "For \"every Nth\". Every 3rd day on Daily; every 14th day from a Tuesday is every other Tuesday.",
+              "pick_anchor": "Required for \"every Nth\". The first eligible date on or after it starts the count; nothing before it is included.",
+              "pick_nth": "For \"Nth of the month\".",
+              "months": "Applied after the pick. \"First Monday\" plus November gives the first Monday of November."
+            }
+          },
+          "advanced": {
+            "name": "Advanced",
+            "data": {
+              "invert": "Invert (every date NOT in this set)",
+              "offset_days": "Shift by (days)",
+              "expose_calendar": "Show as a calendar entity"
+            },
+            "data_description": {
+              "invert": "Turns Workday into Non-workday without configuring it twice.",
+              "offset_days": "Moves every date in the set. -1 gives \"the night before\"; +1 after the first Monday of November gives Election Day. Applied last.",
+              "expose_calendar": "Off is right for a derived set like \"every other Tuesday\" that nobody needs to see in the Calendar panel. It stays selectable in the card either way."
+            }
+          }
         }
       },
       "edit": {
         "title": "Edit {name}",
-        "description": "Precedence is Always > Cancelled > Base.\n\nDates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+        "description": "Precedence is Always › Cancelled › Sources. Sections that hold a value open expanded.\n\nDates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
         "data": {
-          "name": "Name",
-          "weekdays": "Weekdays it can fall on",
-          "base_calendars": "Days come from these calendars",
-          "base_dates": "\u2026and these dates",
-          "exclude_calendars": "Cancelled by these calendars",
-          "exclude_dates": "\u2026and these dates",
-          "exclude_match": "Only cancel when the entry matches",
-          "force_calendars": "Always included by these calendars",
-          "force_dates": "\u2026and these dates",
-          "force_match": "Only force when the entry matches",
-          "invert": "Invert (every date NOT in this set)",
-          "offset_days": "Shift by (days)"
+          "name": "Name"
         },
-        "data_description": {
-          "weekdays": "The base tier, together with the calendars below. Leave empty if the day-set comes entirely from a calendar, such as Trash Day.",
-          "base_calendars": "What this day-set is made of \u2014 e.g. the Workday integration's calendar.",
-          "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17",
-          "exclude_calendars": "These cancel a day \u2014 e.g. a days-off calendar for time off.",
-          "exclude_match": "Optional text matched against an event's title or description, so only some entries cancel. Leave empty to cancel on any entry.",
-          "force_calendars": "These win over everything, including the cancellations above.",
-          "force_match": "Optional text matched against an event's title or description \u2014 e.g. \"Workday\" so only a days-off entry named that reinstates a workday.",
-          "invert": "Turns Workday into Non-workday without configuring it twice.",
-          "offset_days": "Moves every date in the set. -1 gives \"the night before\" \u2014 e.g. a Trash Day Eve set for putting the bins out. Applied last, so it is always this set, moved."
+        "sections": {
+          "sources": {
+            "name": "Sources — where the dates come from",
+            "description": "Any of these, combined.",
+            "data": {
+              "weekdays": "Weekdays",
+              "base_day_set": "Built on another day-set",
+              "base_calendars": "Calendars",
+              "base_dates": "Dates"
+            },
+            "data_description": {
+              "weekdays": "Leave empty if the day-set comes entirely from a calendar or another day-set.",
+              "base_day_set": "Start from that day-set's dates — e.g. Monday, to build \"first Monday of the month\" without a calendar.",
+              "base_calendars": "e.g. the Workday integration's calendar, or the trash-collection calendar.",
+              "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17"
+            }
+          },
+          "cancelled": {
+            "name": "Cancelled — what takes a day back out",
+            "data": {
+              "exclude_calendars": "Cancelled by these calendars",
+              "exclude_dates": "…and these dates",
+              "exclude_match": "Only cancel when the entry matches"
+            },
+            "data_description": {
+              "exclude_calendars": "e.g. a days-off calendar for time off.",
+              "exclude_match": "Optional text matched against an event's title or description. Leave empty to cancel on any entry."
+            }
+          },
+          "always": {
+            "name": "Always — what overrides a cancellation",
+            "data": {
+              "force_calendars": "Always included by these calendars",
+              "force_dates": "…and these dates",
+              "force_match": "Only force when the entry matches"
+            },
+            "data_description": {
+              "force_calendars": "These win over everything, including the cancellations above.",
+              "force_match": "e.g. \"Workday\", so only a days-off entry named that reinstates a workday."
+            }
+          },
+          "pick": {
+            "name": "Pick — narrow to a cadence, an ordinal, or certain months",
+            "description": "Both kinds of pick count ELIGIBLE dates, not calendar days: \"every other trash day\" follows a holiday shift, and \"last workday of the month\" is holiday-aware.",
+            "data": {
+              "pick": "Pick",
+              "pick_every": "Every N",
+              "pick_anchor": "Starting on",
+              "pick_nth": "Which one each month",
+              "months": "Only in these months"
+            },
+            "data_description": {
+              "pick_every": "For \"every Nth\". Every 3rd day on Daily; every 14th day from a Tuesday is every other Tuesday.",
+              "pick_anchor": "Required for \"every Nth\". The first eligible date on or after it starts the count; nothing before it is included.",
+              "pick_nth": "For \"Nth of the month\".",
+              "months": "Applied after the pick. \"First Monday\" plus November gives the first Monday of November."
+            }
+          },
+          "advanced": {
+            "name": "Advanced",
+            "data": {
+              "invert": "Invert (every date NOT in this set)",
+              "offset_days": "Shift by (days)",
+              "expose_calendar": "Show as a calendar entity"
+            },
+            "data_description": {
+              "invert": "Turns Workday into Non-workday without configuring it twice.",
+              "offset_days": "Moves every date in the set. -1 gives \"the night before\"; +1 after the first Monday of November gives Election Day. Applied last.",
+              "expose_calendar": "Off is right for a derived set like \"every other Tuesday\" that nobody needs to see in the Calendar panel. It stays selectable in the card either way."
+            }
+          }
         }
       },
       "pick_edit": {
@@ -91,14 +191,17 @@
       },
       "pick_remove": {
         "title": "Remove a day-set",
-        "description": "Its calendar entity is removed too. Schedules using it will stop matching.",
+        "description": "Its calendar entity is removed too. Schedules using it, and day-sets built on it, will stop matching.",
         "data": {
           "id": "Day-set"
         }
       }
     },
     "error": {
-      "invalid_dates": "Could not read those dates. Use YYYY-MM-DD, separated by commas, with ranges written as YYYY-MM-DD..YYYY-MM-DD."
+      "invalid_dates": "Could not read those dates. Use YYYY-MM-DD, separated by commas, with ranges written as YYYY-MM-DD..YYYY-MM-DD.",
+      "anchor_required": "\"Every Nth\" needs a starting date.",
+      "base_cycle": "That day-set is built on this one (directly or through others), which would loop forever.",
+      "base_missing": "That base day-set no longer exists."
     },
     "abort": {
       "unknown_day_set": "That day-set no longer exists."
@@ -114,6 +217,39 @@
         "fri": "Friday",
         "sat": "Saturday",
         "sun": "Sunday"
+      }
+    },
+    "pick": {
+      "options": {
+        "none": "Every eligible date",
+        "every": "Every Nth eligible date, from a starting date",
+        "nth_of_month": "The Nth (or last) eligible date of each month"
+      }
+    },
+    "pick_nth": {
+      "options": {
+        "1": "First",
+        "2": "Second",
+        "3": "Third",
+        "4": "Fourth",
+        "5": "Fifth",
+        "last": "Last"
+      }
+    },
+    "months": {
+      "options": {
+        "1": "January",
+        "2": "February",
+        "3": "March",
+        "4": "April",
+        "5": "May",
+        "6": "June",
+        "7": "July",
+        "8": "August",
+        "9": "September",
+        "10": "October",
+        "11": "November",
+        "12": "December"
       }
     }
   },

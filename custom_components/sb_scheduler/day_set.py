@@ -22,9 +22,11 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_BASE_CALENDARS,
     CONF_BASE_DATES,
+    CONF_BASE_DAY_SET,
     CONF_EXCLUDE_CALENDARS,
     CONF_EXCLUDE_DATES,
     CONF_EXCLUDE_MATCH,
+    CONF_EXPOSE_CALENDAR,
     CONF_FORCE_CALENDARS,
     CONF_FORCE_DATES,
     CONF_FORCE_MATCH,
@@ -32,16 +34,101 @@ from .const import (
     CONF_INCLUDE_CALENDARS,
     CONF_INCLUDE_DATES,
     CONF_INVERT,
+    CONF_MONTHS,
     CONF_NAME,
     CONF_OFFSET_DAYS,
+    CONF_PICK,
+    CONF_PICK_ANCHOR,
+    CONF_PICK_EVERY,
+    CONF_PICK_NTH,
     CONF_WEEKDAYS,
     HORIZON_DAYS,
+    PICK_EVERY,
+    PICK_NONE,
+    PICK_NTH_LAST,
+    PICK_NTH_OF_MONTH,
     WEEKDAYS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 RANGE_SEP = ".."
+
+
+def order_by_dependency(configs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Sort day-set configs so every base_day_set is evaluated before its user.
+
+    Returns (ordered, unresolved). Anything in `unresolved` names a base that
+    does not exist or sits on a cycle; the caller evaluates it with an empty
+    base and says so, rather than hanging or silently producing nothing.
+    """
+    by_id = {c[CONF_ID]: c for c in configs}
+    ordered: list[dict] = []
+    done: set[str] = set()
+    pending = list(configs)
+    while pending:
+        progressed = False
+        for cfg in list(pending):
+            base = cfg.get(CONF_BASE_DAY_SET) or ""
+            if not base or base in done:
+                ordered.append(cfg)
+                done.add(cfg[CONF_ID])
+                pending.remove(cfg)
+                progressed = True
+            elif base not in by_id:
+                # Missing base: nothing to wait for. Evaluate it anyway.
+                return ordered + [cfg] + [p for p in pending if p is not cfg], [cfg]
+        if not progressed:
+            # Every remaining config waits on another remaining one: a cycle.
+            return ordered + pending, list(pending)
+    return ordered, []
+
+
+def pick_every(
+    eligible: set[datetime.date], every: int, anchor: datetime.date
+) -> set[datetime.date]:
+    """Every Nth eligible date, counting from the first eligible date on or
+    after the anchor. Nothing before the anchor: "starting Sep 22" means it.
+
+    Strides over ELIGIBLE dates, not calendar days — "every other trash day"
+    must survive a holiday shift with its phase intact.
+    """
+    if every <= 1:
+        return {d for d in eligible if d >= anchor}
+    run = sorted(d for d in eligible if d >= anchor)
+    return {d for i, d in enumerate(run) if i % every == 0}
+
+
+def pick_nth_of_month(
+    eligible: set[datetime.date],
+    nth: str,
+    window: tuple[datetime.date, datetime.date],
+) -> set[datetime.date]:
+    """The Nth (1-5) or last eligible date of each month.
+
+    Only months that lie ENTIRELY inside the computed window are considered:
+    a month cut off by the window edge cannot say which date was truly first
+    or last, and a wrong "first Monday" is worse than none.
+    """
+    by_month: dict[tuple[int, int], list[datetime.date]] = {}
+    for d in eligible:
+        by_month.setdefault((d.year, d.month), []).append(d)
+    out: set[datetime.date] = set()
+    lo, hi = window
+    for (year, month), dates in by_month.items():
+        first = datetime.date(year, month, 1)
+        last = (first.replace(day=28) + datetime.timedelta(days=4)).replace(day=1) \
+            - datetime.timedelta(days=1)
+        if first < lo or last > hi:
+            continue
+        dates.sort()
+        if nth == PICK_NTH_LAST:
+            out.add(dates[-1])
+        else:
+            idx = int(nth) - 1
+            if idx < len(dates):
+                out.add(dates[idx])
+    return out
 
 
 class InvalidDateSpec(ValueError):
@@ -111,8 +198,11 @@ async def _calendar_dates(
     start: datetime.date,
     end: datetime.date,
     match: str = "",
-) -> set[datetime.date]:
+) -> set[datetime.date] | None:
     """Every date covered by any event on a calendar, over [start, end].
+
+    Returns None when the calendar cannot be served yet (boot), so the caller
+    can record it as missing and retry, rather than treating it as empty.
 
     A multi-day all-day event covers [start, end) — that is what lets one
     "Summer break" entry stand in for the whole gap, and it is the detail an
@@ -132,7 +222,13 @@ async def _calendar_dates(
             blocking=True,
             return_response=True,
         )
-    except Exception:  # noqa: BLE001 - a missing/broken calendar must not kill setup
+    except Exception as err:  # noqa: BLE001 - a missing/broken calendar must not kill setup
+        # At boot an entity can HAVE a state a beat before its platform can
+        # serve it: the state-change listener fires, we query, and HA answers
+        # "did not match any entities". That is "not ready yet", not a fault.
+        if "did not match any entities" in str(err):
+            _LOGGER.debug("%s is not serviceable yet; will retry", entity_id)
+            return None
         _LOGGER.exception("Failed to read events from %s", entity_id)
         return set()
 
@@ -200,11 +296,22 @@ class DaySet:
     exclude_match: str = ""
     invert: bool = False
     offset_days: int = 0
+    # Derivation: build on another day-set, narrow to a cadence or ordinal,
+    # keep only some months. All default to "off", which is the old model.
+    base_day_set: str = ""
+    pick: str = PICK_NONE
+    pick_every: int = 1
+    pick_anchor: str = ""
+    pick_nth: str = "1"
+    months: list[int] = field(default_factory=list)
+    expose_calendar: bool = True
 
     _eligible: set[datetime.date] = field(default_factory=set, repr=False)
     _window: tuple[datetime.date, datetime.date] | None = field(
         default=None, repr=False
     )
+    # Source calendars that did not exist at the last refresh (boot race).
+    _missing_sources: list[str] = field(default_factory=list, repr=False)
 
     @classmethod
     def from_config(cls, config: dict) -> DaySet:
@@ -234,6 +341,14 @@ class DaySet:
             exclude_match=config.get(CONF_EXCLUDE_MATCH) or "",
             invert=bool(config.get(CONF_INVERT)),
             offset_days=int(config.get(CONF_OFFSET_DAYS) or 0),
+            base_day_set=config.get(CONF_BASE_DAY_SET) or "",
+            pick=config.get(CONF_PICK) or PICK_NONE,
+            pick_every=int(config.get(CONF_PICK_EVERY) or 1),
+            pick_anchor=config.get(CONF_PICK_ANCHOR) or "",
+            pick_nth=str(config.get(CONF_PICK_NTH) or "1"),
+            # The form stores months as strings ("11"); accept ints too.
+            months=sorted({int(m) for m in (config.get(CONF_MONTHS) or [])}),
+            expose_calendar=bool(config.get(CONF_EXPOSE_CALENDAR, True)),
         )
 
     @property
@@ -241,10 +356,43 @@ class DaySet:
         """Calendars this day-set reads, so we can re-evaluate when they change."""
         return [*self.base_calendars, *self.force_calendars, *self.exclude_calendars]
 
+    @property
+    def anchor_date(self) -> datetime.date | None:
+        """The stride anchor as a date, or None when unset or unparseable."""
+        if self.pick != PICK_EVERY or not self.pick_anchor:
+            return None
+        try:
+            return datetime.date.fromisoformat(self.pick_anchor[:10])
+        except ValueError:
+            _LOGGER.error(
+                "Day-set '%s' has an unreadable anchor %r; the stride is ignored",
+                self.id, self.pick_anchor,
+            )
+            return None
+
+    def describe_pick(self) -> str:
+        """One line for the calendar entity's attributes and the card."""
+        if self.pick == PICK_EVERY:
+            return f"every {self.pick_every} from {self.pick_anchor or '?'}"
+        if self.pick == PICK_NTH_OF_MONTH:
+            n = self.pick_nth
+            word = "last" if n == PICK_NTH_LAST else \
+                {"1": "1st", "2": "2nd", "3": "3rd"}.get(n, f"{n}th")
+            return f"{word} of the month"
+        return ""
+
     async def async_refresh(
-        self, hass: HomeAssistant, start: datetime.date, days: int = HORIZON_DAYS
+        self,
+        hass: HomeAssistant,
+        start: datetime.date,
+        days: int = HORIZON_DAYS,
+        base_set: set[datetime.date] | None = None,
     ) -> None:
-        """Recompute eligibility across the whole window."""
+        """Recompute eligibility across the whole window.
+
+        `base_set` is the resolved eligibility of `base_day_set`, supplied by
+        the registry, which evaluates day-sets in dependency order.
+        """
         end = start + datetime.timedelta(days=days)
 
         # An offset moves dates in or out at the edges, so evaluate a window
@@ -253,18 +401,35 @@ class DaySet:
         pad = datetime.timedelta(days=abs(self.offset_days))
         calc_start, calc_end = start - pad, end + pad
 
+        # A source calendar that does not exist YET is the normal case at boot:
+        # this integration can set up before trash_day or workday have created
+        # theirs, and `calendar.get_events` then raises "did not match any
+        # entities". Skip it, remember it, and let the registry's source-change
+        # listener re-run us the moment the entity appears. Not an error.
+        missing: list[str] = []
+        states = getattr(hass, "states", None)
+
         async def collect(entities, dates_spec, match=""):
             out: set[datetime.date] = set()
             for entity_id in entities:
-                out |= await _calendar_dates(
+                if states is not None and states.get(entity_id) is None:
+                    missing.append(entity_id)
+                    continue
+                dates = await _calendar_dates(
                     hass, entity_id, calc_start, calc_end, match
                 )
+                if dates is None:            # present but not serviceable yet
+                    missing.append(entity_id)
+                    continue
+                out |= dates
             out |= _dates_in_ranges(
                 parse_date_spec(dates_spec), calc_start, calc_end
             )
             return out
 
         base = await collect(self.base_calendars, self.base_dates)
+        if base_set:
+            base |= base_set                     # built on another day-set
         forced = await collect(
             self.force_calendars, self.force_dates, self.force_match
         )
@@ -274,7 +439,8 @@ class DaySet:
 
         mask = {WEEKDAYS.index(d) for d in self.weekdays if d in WEEKDAYS}
 
-        eligible: set[datetime.date] = set()
+        # Stage 1: the three tiers decide which dates are eligible at all.
+        hits: set[datetime.date] = set()
         cur = calc_start
         while cur <= calc_end:
             if cur in forced:
@@ -285,7 +451,30 @@ class DaySet:
                 hit = True                       # base: calendars and/or mask
             else:
                 hit = False
-            if hit != self.invert:
+            if hit:
+                hits.add(cur)
+            cur += datetime.timedelta(days=1)
+
+        # Stage 2: pick narrows to a cadence or an ordinal within each month.
+        # Before invert, so "NOT the first Monday" means what it says.
+        if self.pick == PICK_EVERY:
+            anchor = self.anchor_date
+            if anchor is not None:
+                hits = pick_every(hits, self.pick_every, anchor)
+        elif self.pick == PICK_NTH_OF_MONTH:
+            hits = pick_nth_of_month(hits, self.pick_nth, (calc_start, calc_end))
+
+        # Stage 3: month filter. After pick so a stride keeps its phase across
+        # the year, and before offset so "day before the first Monday of
+        # January" may legitimately land in December.
+        if self.months:
+            keep = set(self.months)
+            hits = {d for d in hits if d.month in keep}
+
+        eligible: set[datetime.date] = set()
+        cur = calc_start
+        while cur <= calc_end:
+            if (cur in hits) != self.invert:
                 eligible.add(cur)
             cur += datetime.timedelta(days=1)
 
@@ -295,6 +484,12 @@ class DaySet:
         # Clip back to the window the caller asked about.
         self._eligible = {d for d in eligible if start <= d <= end}
         self._window = (start, end)
+        self._missing_sources = missing
+        if missing:
+            _LOGGER.debug(
+                "Day-set '%s' computed without %s (not created yet); will "
+                "recompute when it appears", self.id, missing,
+            )
 
     def is_eligible(self, day: datetime.date) -> bool:
         """Whether `day` is in this set. False outside the computed window."""
@@ -329,6 +524,15 @@ class DaySet:
             if cur in self._eligible:
                 return cur
             cur += datetime.timedelta(days=1)
+        if self._missing_sources:
+            # Empty because a source has not been created yet, not because the
+            # horizon is genuinely bare. Say so at a level that does not read
+            # like an outage — the listener will fill it in.
+            _LOGGER.warning(
+                "Day-set '%s' has no dates yet: waiting for %s to be created",
+                self.id, self._missing_sources,
+            )
+            return None
         _LOGGER.error(
             "Day-set '%s' has no eligible date between %s and the %s-day horizon "
             "(%s). Nothing will be scheduled against it.",

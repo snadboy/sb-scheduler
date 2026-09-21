@@ -25,9 +25,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up one calendar per day-set."""
     registry: DaySetRegistry = hass.data[DOMAIN][entry.entry_id].day_sets
+    # A derived set — "every other Tuesday", "Election Day" — usually does not
+    # want a calendar of its own. Only the ones that asked for it get one.
     async_add_entities(
         DaySetCalendar(entry, registry, day_set)
         for day_set in registry.day_sets.values()
+        if day_set.expose_calendar
     )
 
 
@@ -72,6 +75,9 @@ class DaySetCalendar(CalendarEntity):
             "force_calendars": self._day_set.force_calendars,
             "inverted": self._day_set.invert,
             "offset_days": self._day_set.offset_days,
+            "base_day_set": self._day_set.base_day_set or None,
+            "pick": self._day_set.describe_pick() or None,
+            "months": self._day_set.months or None,
         }
 
     @property
