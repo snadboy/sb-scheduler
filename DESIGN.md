@@ -420,6 +420,21 @@ either. Removal is refused while a schedule or another day-set depends on
 the set: a silently broken schedule is the exact failure this integration
 exists to prevent. The Configure form stays as the second door.
 
+## Schedule negation (2026-09-21)
+
+"Is the only reason we have both Workday and Non-workday that a schedule has
+no negate?" — yes. A schedule now carries `negate: bool`; when set, the
+timer is handed `NegatedDaySet(base)`, the complement, and Non-workday was
+deleted from the live config (nothing referenced it).
+
+This is a deliberate exception to the rule above that transformations live
+in day-sets. I recommended keeping it there for consistency; the user chose
+fewer named inverses, and negation is small enough that two homes (day-set
+`invert`, schedule `negate`) cost almost nothing. The card shows a negated
+schedule with a hollow "not workday" chip so it cannot be misread as a
+day-set called that. If Daily is negated the schedule can never fire; the
+wrapper logs an ERROR rather than a silent None, same as an empty horizon.
+
 ## Open questions
 
 - Whether day-sets should be shareable across config entries or scoped to one.
