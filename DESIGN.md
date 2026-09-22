@@ -440,7 +440,16 @@ schedule with a hollow "not workday" chip so it cannot be misread as a
 day-set called that. If Daily is negated the schedule can never fire; the
 wrapper logs an ERROR rather than a silent None, same as an empty horizon.
 
-## Self-sufficient day-sets: holidays, subtraction, tags (designed 2026-09-21, not yet built)
+## Self-sufficient day-sets: holidays, subtraction, tags (designed 2026-09-21, built and live 2026-09-22 as v0.5.0)
+
+*Naming, decided 2026-09-22:* the user-facing word is **day type** ("a rule
+about which dates count"), because "calendar" was already doing three jobs —
+a source, a published entity, and the HA panel — and calling the rule a
+calendar too would have made its input, output and viewer all one word. The
+code keeps `day_set` (services, attributes, config keys, roster): HA itself
+lives with "Helpers" in the UI and `input_*` in the entities, and a rename
+would have bought nothing but a broken card ↔ integration contract. Sources
+stay "calendars", because that is what they are.
 
 ### The problem
 

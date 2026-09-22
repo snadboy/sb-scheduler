@@ -94,6 +94,50 @@ done. Left as a fault this read as *empty* — no traceback-free way to tell
 refresh. Now in `NOT_READY_MARKERS` alongside "did not match any entities";
 same missing-source retry. Test: `SyncingHass`.
 
+## Self-sufficient day types (2026-09-22, v0.5.0) — BUILT and LIVE
+
+DESIGN.md § *Self-sufficient day-sets* is implemented and migrated. The live
+graph: `holiday` (native `holidays` US, minus Columbus / Veterans /
+Washington's Birthday / Juneteenth National Independence Day, observed on)
+→ `workday` (Mon–Fri, `exclude_day_sets [holiday]`, Anderson `#do` vetoes,
+`#wd` forces) → `day_off` (Mon–Fri, `exclude_day_sets [workday]`). All
+three publish calendars. **Deleted the same morning:** both Workday
+integration entries, the Days Off local calendar (and its .ics), the
+"Workday Sensor" template helper — nothing else consumed them (searched all
+dashboards, automations, scripts, helpers).
+
+- **Naming:** user-facing word is **day type** (card, form, strings, log
+  lines, entity display names). Code keeps `day_set` everywhere — services
+  (`set_day_set`), attributes, config keys, the roster. Do not "fix" that.
+- **Acceptance was a diff:** `calendar.workday`'s 400-day date list was
+  captured under the old engine (308 dates), was byte-identical after the
+  engine deploy, and after the config migration differed by exactly the two
+  seeded Days Off dates (2026-11-27, 2026-12-24) — now workdays.
+  `calendar.day_off` equalled the weekday complement (8/8). Scripts:
+  scratchpad `dump_cal.py`, `workday_before.txt`.
+- **Matching is whole-token, TITLE only** now (`_tokens`, `_event_matches`):
+  `#do` ≠ `#done`, punctuation stripped, multi-word rules match a contiguous
+  run, descriptions are not read. This was a deliberate breaking change.
+- **Timed events** cover every local date they touch (`_event_span`); an
+  end exactly at midnight is exclusive. A two-hour `#do` block is a day off.
+- **`set_day_set` REPLACES editable fields on update** and drops the legacy
+  `include_*` keys (`LEGACY_FIELDS`). Before that fix a rewritten Workday
+  would have kept `include_calendars: [workday_sensor…]` beside an empty
+  `base_calendars`, and `from_config` reads the legacy key as a fallback.
+- **`holidays_remove` uses `pop_named`** (icontains), so "Juneteenth" works
+  — but the card shows the stored string as its own chip beside the
+  library name, so store the library's full name. Live config was
+  normalised to "Juneteenth National Independence Day".
+- **`list_holidays`** is a response service; the options form offers names
+  only for a country already saved (static form), the card fetches on
+  country `change`. Unknown country → `holidays_country` validation error.
+- `button.sb_scheduler_refresh` + ↻ in the card header; diagnostics
+  download = the export. `holidays>=0.104` is a floor in the manifest.
+- Tests need the library for the holidays block: on sdevs there is no pip;
+  the wheel is unpacked at `~/.local/lib/python3-extra` — run with
+  `PYTHONPATH=~/.local/lib/python3-extra python3 tests/test_day_set.py`
+  (177 checks; without it the holidays block skips, 160).
+
 ## Days off from the user's Google Calendar (2026-09-21, v0.4.1)
 
 The user marks a day off by putting an all-day event titled **`#do`** (or the
