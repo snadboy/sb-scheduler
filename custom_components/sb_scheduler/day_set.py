@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import re
 from dataclasses import dataclass, field
 
 from homeassistant.core import HomeAssistant
@@ -244,6 +245,34 @@ def _dates_in_ranges(
             out.add(cur)
             cur += datetime.timedelta(days=1)
     return out
+
+
+MATCH_RULE = re.compile(r"^\s*(calendar\.[a-z0-9_]+)\s*:\s*(.*?)\s*$")
+
+
+def parse_match_spec(raw: str) -> tuple[str, dict[str, str]]:
+    """A tier's match text, as (default needle, per-calendar needles).
+
+    A bare string applies to every calendar in the tier, as before. A line
+    `calendar.anderson: #do` applies only to that calendar, so one tier can
+    veto on ANY entry of a days-off calendar and on TAGGED entries of a busy
+    personal one. Lines and `;` both separate rules.
+    """
+    default_parts: list[str] = []
+    per: dict[str, str] = {}
+    for part in re.split(r"[;\n]", raw or ""):
+        m = MATCH_RULE.match(part)
+        if m:
+            per[m.group(1)] = m.group(2)
+        elif part.strip():
+            default_parts.append(part.strip())
+    return " ".join(default_parts), per
+
+
+def match_for(spec: str, entity_id: str) -> str:
+    """The needle that applies to one calendar under a tier's match text."""
+    default, per = parse_match_spec(spec)
+    return per.get(entity_id, default)
 
 
 def _event_matches(event: dict, match: str) -> bool:
@@ -486,7 +515,7 @@ class DaySet:
                     missing.append(entity_id)
                     continue
                 dates = await _calendar_dates(
-                    hass, entity_id, calc_start, calc_end, match
+                    hass, entity_id, calc_start, calc_end, match_for(match, entity_id)
                 )
                 if dates is None:            # present but not serviceable yet
                     missing.append(entity_id)

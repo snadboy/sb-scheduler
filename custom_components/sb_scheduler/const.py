@@ -87,6 +87,12 @@ PAST_DAYS = 45
 REFRESH_HOUR = 0
 REFRESH_MINUTE = 5
 
+# ...and every N minutes regardless. A source calendar's ENTITY only changes
+# when its next event changes, so an event added for Friday into a calendar
+# that has something every day would otherwise not be seen until midnight.
+# Google Calendar polls every 15 min; a full refresh here costs ~60 ms.
+REFRESH_INTERVAL_MINUTES = 15
+
 # When a refresh finds a source calendar not created or not serviceable yet
 # (boot ordering), try again this many seconds later — deterministically,
 # rather than hoping the source emits another state change.

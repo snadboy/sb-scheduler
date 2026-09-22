@@ -86,6 +86,28 @@ OTHER exception from a calendar is still logged as an error, not swallowed.
 A plain entry reload never hits this; only boot does. Tests: `LateHass`,
 `HalfUpHass`, `BrokenHass` in `tests/test_day_set.py`.
 
+## Days off from the user's Google Calendar (2026-09-21, v0.4.1)
+
+The user marks a day off by putting an all-day event titled **`#do`** (or the
+tag in the notes) on `calendar.anderson`, their primary Google calendar.
+Workday's veto tier is now `[calendar.days_off, calendar.anderson]` with
+`exclude_match = "calendar.anderson: #do"`.
+
+- **Match rules are per calendar now.** The tier's match text used to be one
+  needle for every calendar in the tier, so adding Anderson would have forced
+  `#do` onto the local days_off entries too. `parse_match_spec` reads
+  `calendar.x: needle` lines (or `;`-separated) as per-calendar rules and any
+  bare text as the default. Matching is substring, case-insensitive, title
+  OR description — so `#done` would also match `#do`; keep tags distinct.
+- **How fast a new event takes effect:** Google → HA polls ~15 min. Then the
+  day-set refreshes on (a) a source calendar's state change — which only
+  happens when that entity's NEXT event changes, so a Friday event on a
+  calendar with something every day changes nothing visible; (b) 00:05
+  nightly; (c) NEW: every `REFRESH_INTERVAL_MINUTES` = 15 (a full refresh
+  measured ~60 ms); (d) `sb_scheduler.refresh` on demand. Worst case ≈ 30 min
+  from saving the event in Google. Schedules re-arm on the update signal, so
+  a day that becomes vetoed before its trigger time is dropped.
+
 ## Where things are
 
 - `custom_components/sb_scheduler/` — the live integration: day-sets (Phase 0)

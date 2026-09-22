@@ -73,6 +73,8 @@ WEEKDAY_PICKER = SelectSelector(
 
 
 TEXT = TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))
+# Match rules can be per calendar ("calendar.anderson: #do"), one per line.
+MATCH = TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT, multiline=True))
 OFFSET = NumberSelector(
     NumberSelectorConfig(
         min=-MAX_OFFSET_DAYS, max=MAX_OFFSET_DAYS, step=1,
@@ -168,14 +170,14 @@ def day_set_schema(defaults: dict | None, others: list[dict]) -> vol.Schema:
             CONF_EXCLUDE_CALENDARS, default=d.get(CONF_EXCLUDE_CALENDARS, [])
         ): CALENDARS,
         vol.Optional(CONF_EXCLUDE_DATES, default=d.get(CONF_EXCLUDE_DATES, "")): DATES,
-        vol.Optional(CONF_EXCLUDE_MATCH, default=d.get(CONF_EXCLUDE_MATCH, "")): TEXT,
+        vol.Optional(CONF_EXCLUDE_MATCH, default=d.get(CONF_EXCLUDE_MATCH, "")): MATCH,
     }
     always = {
         vol.Optional(
             CONF_FORCE_CALENDARS, default=d.get(CONF_FORCE_CALENDARS, [])
         ): CALENDARS,
         vol.Optional(CONF_FORCE_DATES, default=d.get(CONF_FORCE_DATES, "")): DATES,
-        vol.Optional(CONF_FORCE_MATCH, default=d.get(CONF_FORCE_MATCH, "")): TEXT,
+        vol.Optional(CONF_FORCE_MATCH, default=d.get(CONF_FORCE_MATCH, "")): MATCH,
     }
     # A DateSelector rejects "" as a default, so the anchor only gets one
     # when there is a real date to show.

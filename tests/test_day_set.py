@@ -573,6 +573,35 @@ none = DaySet(id="never", name="Never")
 asyncio.run(none.async_refresh(nohass, D("2026-09-14"), days=30))
 check("negating an empty set is every day", NegatedDaySet(none).next_date_on_or_after(D("2026-09-21")), D("2026-09-21"))
 
+print("\nper-calendar match rules: 'calendar.x: needle' in a tier's match text")
+parse_match_spec = _day_set.parse_match_spec
+match_for = _day_set.match_for
+check("bare text is the default for all", parse_match_spec("Workday"), ("Workday", {}))
+check("a rule line is per calendar", parse_match_spec("calendar.anderson: #do"), ("", {"calendar.anderson": "#do"}))
+check("both, with ; as separator too",
+      parse_match_spec("Workday; calendar.anderson: #wd\ncalendar.other: tag"),
+      ("Workday", {"calendar.anderson": "#wd", "calendar.other": "tag"}))
+check("lookup falls back to the default", match_for("calendar.anderson: #do", "calendar.days_off"), "")
+check("lookup finds the specific rule", match_for("calendar.anderson: #do", "calendar.anderson"), "#do")
+
+# THE case: days_off cancels on ANY entry, the personal Google calendar only on #do.
+two = FakeHass({
+    "calendar.workday": [allday(f"2026-09-{d:02d}", f"2026-09-{d+1:02d}") for d in (21, 22, 23, 24, 25)],
+    "calendar.days_off": [allday("2026-09-22", "2026-09-23", "Dentist")],
+    "calendar.anderson": [allday("2026-09-24", "2026-09-25", "Dogs - Boarding"),
+                          allday("2026-09-25", "2026-09-26", "#do"),
+                          dict(allday("2026-09-23", "2026-09-24", "Errand"), description="notes #do")],
+})
+wd = DaySet(id="w", name="Workday", base_calendars=["calendar.workday"],
+            exclude_calendars=["calendar.days_off", "calendar.anderson"],
+            exclude_match="calendar.anderson: #do")
+asyncio.run(wd.async_refresh(two, D("2026-09-20"), days=10))
+check("Mon: plain workday", wd.is_eligible(D("2026-09-21")), True)
+check("Tue: days_off cancels on ANY entry (no #do needed)", wd.is_eligible(D("2026-09-22")), False)
+check("Wed: '#do' in the DESCRIPTION cancels", wd.is_eligible(D("2026-09-23")), False)
+check("Thu: an untagged Anderson entry does NOT cancel", wd.is_eligible(D("2026-09-24")), True)
+check("Fri: an all-day event TITLED #do cancels", wd.is_eligible(D("2026-09-25")), False)
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S)")

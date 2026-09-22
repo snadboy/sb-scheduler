@@ -11,6 +11,7 @@ from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
     async_track_time_change,
+    async_track_time_interval,
 )
 from homeassistant.util import dt as dt_util
 
@@ -21,6 +22,7 @@ from .const import (
     MISSING_SOURCE_RETRY_SECONDS,
     PAST_DAYS,
     REFRESH_HOUR,
+    REFRESH_INTERVAL_MINUTES,
     REFRESH_MINUTE,
     SIGNAL_DAY_SETS_UPDATED,
 )
@@ -66,6 +68,17 @@ class DaySetRegistry:
                 hour=REFRESH_HOUR,
                 minute=REFRESH_MINUTE,
                 second=0,
+            )
+        )
+        # Periodically too: the source-change listener below only fires when
+        # a calendar entity's own state changes, which means "its NEXT event
+        # changed" — a day-off added for Friday into a busy calendar changes
+        # nothing visible until Friday is next. A full refresh is ~60 ms.
+        self._unsubs.append(
+            async_track_time_interval(
+                self.hass,
+                self._handle_interval,
+                datetime.timedelta(minutes=REFRESH_INTERVAL_MINUTES),
             )
         )
 
@@ -143,6 +156,9 @@ class DaySetRegistry:
         await self.async_refresh()
 
     async def _handle_midnight(self, _now) -> None:
+        await self.async_refresh()
+
+    async def _handle_interval(self, _now) -> None:
         await self.async_refresh()
 
     @callback
