@@ -115,6 +115,12 @@ Workday's veto tier is now `[calendar.days_off, calendar.anderson]` with
   measured ~60 ms); (d) `sb_scheduler.refresh` on demand. Worst case ≈ 30 min
   from saving the event in Google. Schedules re-arm on the update signal, so
   a day that becomes vetoed before its trigger time is dropped.
+- **Proving a refresh fired:** `async_refresh(reason)` logs
+  `Refreshed N day-set(s) in X ms (<reason>)` at DEBUG — reasons are
+  `setup`, `midnight`, `interval`, `retry`, `service`, `<entity> changed`.
+  Enable at runtime: `logger.set_level` with
+  `custom_components.sb_scheduler.registry: debug`. Do NOT use the entities'
+  `last_reported` as the gauge — identical re-writes did not move it here.
 
 ## Where things are
 
