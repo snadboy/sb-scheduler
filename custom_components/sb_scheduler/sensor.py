@@ -39,13 +39,14 @@ class DaySetRoster(SensorEntity):
 
     _attr_should_poll = False
     _attr_has_entity_name = False
-    _attr_name = "SB Scheduler Day types"
+    _attr_name = "Day types"
     _attr_icon = "mdi:calendar-multiple"
 
     def __init__(self, entry: ConfigEntry, data) -> None:
         self._entry = entry
         self._data = data
         self._attr_unique_id = f"{entry.entry_id}_{ROSTER_UNIQUE_SUFFIX}"
+        self._attr_device_info = data.device
 
     async def async_added_to_hass(self) -> None:
         for signal in (SIGNAL_DAY_SETS_UPDATED, SIGNAL_SCHEDULES_UPDATED):

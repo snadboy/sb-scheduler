@@ -94,6 +94,27 @@ done. Left as a fault this read as *empty* — no traceback-free way to tell
 refresh. Now in `NOT_READY_MARKERS` alongside "did not match any entities";
 same missing-source retry. Test: `SyncingHass`.
 
+## One SERVICE device, named "SB" (2026-09-22, v0.5.1)
+
+Every entity now attaches to one `DeviceEntryType.SERVICE` device keyed on
+the entry id (`device.py`; `RuntimeData.device`). Two things learned the
+hard way:
+
+- **`integration.version` is an AwesomeVersion, not a str.** Passing it as
+  `sw_version` made the device registry raise `AwesomeVersionCompareException`
+  on every entity add — 15 errors, no schedules armed. `str()` it.
+- **HA 2026.9 prefixes the device name onto EVERY entity's friendly name**,
+  `has_entity_name` or not (read `async_get_full_entity_name` in the
+  container: the flag only controls stripping a prefix already present in
+  the entity name). So the device is named just **"SB"** → "SB Workday",
+  "SB Day Off", "SB Garden Lights". Entity `_attr_name`s carry only their
+  own noun ("Refresh", "Day types"); repeating the prefix would double it.
+  The `.storage` device registry file lags the live registry by minutes —
+  verify with the WS `config/device_registry/list`, not the file.
+- Entity ids did not change (the registry already held them). The card is
+  unaffected (it reads names from attributes, not `friendly_name`); the
+  Calendar panel sidebar now groups ours apart from the user's own.
+
 ## Self-sufficient day types (2026-09-22, v0.5.0) — BUILT and LIVE
 
 DESIGN.md § *Self-sufficient day-sets* is implemented and migrated. The live

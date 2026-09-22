@@ -19,7 +19,9 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, cal
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.loader import async_get_integration
 from homeassistant.util import slugify
 
 from .const import (
@@ -36,6 +38,7 @@ from .const import (
     DOMAIN,
     SIGNAL_SCHEDULES_UPDATED,
 )
+from .device import device_info
 from .day_set import (
     DAY_SET_FIELDS,
     LEGACY_FIELDS,
@@ -107,6 +110,8 @@ class RuntimeData:
 
     day_sets: DaySetRegistry
     schedules: ScheduleStore
+    # The one SERVICE device every entity of this entry attaches to.
+    device: DeviceInfo
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -117,7 +122,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     schedules = ScheduleStore(hass)
     await schedules.async_load()
 
-    data = RuntimeData(day_sets=day_sets, schedules=schedules)
+    integration = await async_get_integration(hass, DOMAIN)
+    data = RuntimeData(
+        day_sets=day_sets, schedules=schedules,
+        device=device_info(entry, integration.version),
+    )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = data
 
     _purge_orphaned_entities(hass, entry, data)

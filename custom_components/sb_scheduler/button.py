@@ -25,12 +25,13 @@ async def async_setup_entry(
 class RefreshButton(ButtonEntity):
     _attr_should_poll = False
     _attr_has_entity_name = False
-    _attr_name = "SB Scheduler Refresh"
+    _attr_name = "Refresh"
     _attr_icon = "mdi:calendar-refresh"
 
     def __init__(self, entry: ConfigEntry, data) -> None:
         self._data = data
         self._attr_unique_id = f"{entry.entry_id}_refresh"
+        self._attr_device_info = data.device
 
     async def async_press(self) -> None:
         await self._data.day_sets.async_refresh("button")

@@ -24,11 +24,12 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up one calendar per day-set."""
-    registry: DaySetRegistry = hass.data[DOMAIN][entry.entry_id].day_sets
+    data = hass.data[DOMAIN][entry.entry_id]
+    registry: DaySetRegistry = data.day_sets
     # A derived set — "every other Tuesday", "Election Day" — usually does not
     # want a calendar of its own. Only the ones that asked for it get one.
     async_add_entities(
-        DaySetCalendar(entry, registry, day_set)
+        DaySetCalendar(entry, registry, day_set, data.device)
         for day_set in registry.day_sets.values()
         if day_set.expose_calendar
     )
@@ -41,12 +42,13 @@ class DaySetCalendar(CalendarEntity):
     _attr_has_entity_name = False
 
     def __init__(
-        self, entry: ConfigEntry, registry: DaySetRegistry, day_set: DaySet
+        self, entry: ConfigEntry, registry: DaySetRegistry, day_set: DaySet, device
     ) -> None:
         self._registry = registry
         self._day_set = day_set
         self._attr_name = day_set.name
         self._attr_unique_id = f"{entry.entry_id}_{day_set.id}"
+        self._attr_device_info = device
         self._attr_icon = "mdi:calendar-check"
 
     async def async_added_to_hass(self) -> None:

@@ -80,6 +80,7 @@ class ScheduleEntity(SwitchEntity):
         self._data = data
         self.schedule_id = schedule_id
         self._attr_unique_id = f"{entry.entry_id}_schedule_{schedule_id}"
+        self._attr_device_info = data.device
         self._timer_unsub = None
         self._next: object | None = None
         self._next_steps: list[str] = []
