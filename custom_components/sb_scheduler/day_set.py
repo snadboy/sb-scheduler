@@ -53,6 +53,14 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Substrings of a `calendar.get_events` failure that mean "come back later",
+# not "broken". Matched on the message because HA raises plain
+# HomeAssistantError / ServiceValidationError for all of them.
+NOT_READY_MARKERS = (
+    "did not match any entities",           # core: entity registered, platform not serving
+    "Sync from server has not completed",   # google: first sync still in flight
+)
+
 RANGE_SEP = ".."
 
 
@@ -325,7 +333,11 @@ async def _calendar_dates(
         # At boot an entity can HAVE a state a beat before its platform can
         # serve it: the state-change listener fires, we query, and HA answers
         # "did not match any entities". That is "not ready yet", not a fault.
-        if "did not match any entities" in str(err):
+        # A Google calendar has a third shape: entity up, service reachable,
+        # but its first sync still in flight — "Sync from server has not
+        # completed". Same treatment, or a busy personal calendar reads as
+        # empty (and a day off is missed) until the next refresh.
+        if any(s in str(err) for s in NOT_READY_MARKERS):
             _LOGGER.debug("%s is not serviceable yet; will retry", entity_id)
             return None
         _LOGGER.exception("Failed to read events from %s", entity_id)

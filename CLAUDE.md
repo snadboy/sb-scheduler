@@ -86,6 +86,14 @@ OTHER exception from a calendar is still logged as an error, not swallowed.
 A plain entry reload never hits this; only boot does. Tests: `LateHass`,
 `HalfUpHass`, `BrokenHass` in `tests/test_day_set.py`.
 
+(3) **Google: "Unable to get events: Sync from server has not completed"**
+(seen the first boot after Anderson joined Workday, 31 s in). The entity is
+up and the service reaches it; the integration's first sync is just not
+done. Left as a fault this read as *empty* — no traceback-free way to tell
+"no events" from "not synced" — so a `#do` would be missed until the next
+refresh. Now in `NOT_READY_MARKERS` alongside "did not match any entities";
+same missing-source retry. Test: `SyncingHass`.
+
 ## Days off from the user's Google Calendar (2026-09-21, v0.4.1)
 
 The user marks a day off by putting an all-day event titled **`#do`** (or the

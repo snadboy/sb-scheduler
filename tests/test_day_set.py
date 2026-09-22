@@ -514,6 +514,25 @@ asyncio.run(mid.async_refresh(half, D("2026-10-01"), days=30))
 check("the retry fills it in", mid.is_eligible(D("2026-10-02")), True)
 check("...and clears missing", mid._missing_sources, [])
 
+# The third shape (seen 2026-09-21 on calendar.anderson): a Google calendar is
+# up and serviceable, but its first sync is still running. Reads as empty if
+# treated as a fault — and a busy calendar reading as empty hides a day off.
+class SyncingHass(HalfUpHass):
+    async def async_call(self, domain, service, data, blocking=False, return_response=False):
+        self.calls.append(data["entity_id"])
+        if data["entity_id"] not in self._existing:
+            raise RuntimeError("Unable to get events: Sync from server has not completed")
+        return await FakeHass.async_call(self, domain, service, data, blocking, return_response)
+
+
+syncing = SyncingHass({"calendar.g": [allday("2026-10-02", "2026-10-03")]}, existing=[])
+gs = DaySet(id="g", name="G", base_calendars=["calendar.g"])
+asyncio.run(gs.async_refresh(syncing, D("2026-10-01"), days=30))
+check("a still-syncing Google calendar counts as missing", gs._missing_sources, ["calendar.g"])
+syncing._existing.add("calendar.g")
+asyncio.run(gs.async_refresh(syncing, D("2026-10-01"), days=30))
+check("...and the retry fills it in", gs.is_eligible(D("2026-10-02")), True)
+
 # A genuinely broken calendar is still an error, not "missing".
 class BrokenHass(LateHass):
     def get(self, entity_id): return object()
