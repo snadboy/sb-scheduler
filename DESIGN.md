@@ -317,6 +317,11 @@ mask and `weekend = invert(work_week)`. It would also let School Day exclude
 Non-workday instead of re-listing holidays. Deferred deliberately: building it
 now would solve a problem nobody has yet.
 
+*Update 2026-09-21:* half of this arrives as `exclude_day_sets` in the
+self-sufficient day-sets design below — the Workday integration's mask goes
+away with the integration, so the duplication shrinks to sb_scheduler's own
+masks, which one config owns.
+
 ## Naming: day-set calendars can collide with their sources
 
 A day-set named after the calendar it is built from collides: "Trash Day"
@@ -435,11 +440,161 @@ schedule with a hollow "not workday" chip so it cannot be misread as a
 day-set called that. If Daily is negated the schedule can never fire; the
 wrapper logs an ERROR rather than a silent None, same as an empty horizon.
 
+## Self-sufficient day-sets: holidays, subtraction, tags (designed 2026-09-21, not yet built)
+
+### The problem
+
+"Why is the day after Thanksgiving a day off but not Thanksgiving?" — because
+`calendar.days_off` was never a list of days off. It was a **Local Calendar a
+Claude session created on 2026-09-16** as the place to type corrections to
+the Workday integration's holiday list, seeded with two example entries that
+nobody questioned, and shown in HA's calendar panel under a name that
+promises the whole picture. The user's verdict: a hand-maintained local
+calendar is a non-starter.
+
+Behind it, the Workday day-set is assembled from three external scaffolds:
+
+| Scaffold | Owner | What it contributed | Consumers found |
+|---|---|---|---|
+| `calendar.workday_sensor_us_calendar` | Workday integration ("Workday Sensor US") | Mon–Fri minus US federal holidays, minus Columbus / Veterans / Washington's Birthday / Juneteenth | this day-set only |
+| "Workday Reference (all holidays)" | a second Workday entry | comparison only | none |
+| `calendar.days_off` | Local Calendar | PTO; "Workday"-titled entries reinstate | this day-set + `binary_sensor.workday_sensor` |
+| `binary_sensor.workday_sensor` | template helper | combined the above for the old scheduler | **none** (all dashboards, automations, scripts and helpers searched) |
+
+Every boot race fixed so far (§CLAUDE.md) came from reading those external
+calendars during setup. Only one external source has a reason to exist: the
+user's own Google calendar (Anderson), which is where they already put their
+life.
+
+### Not a second integration
+
+The user asked whether an "SB Calendar" integration publishing Workday / Days
+Off / Holidays / Weekend as true calendars would have been the better shape.
+**It is — and it is what day-sets already are**: each one is published as
+`calendar.<id>`. Splitting the calendar layer out of sb_scheduler would
+reintroduce a cross-integration read (the boot-race class) and a second
+refresh loop. So the design stays one integration and makes the day-set layer
+**self-sufficient**: two new capabilities, then Workday, Holiday and Day Off
+become ordinary day-sets.
+
+### New capability 1: a native holidays source
+
+A day-set's Base tier gains a **holidays** source, computed in-process with
+the `holidays` library — the same library, same version (0.104), the Workday
+integration uses, already present in the core image; the manifest declares
+`holidays>=0.104` (a floor, not a pin, so a core bump can never conflict).
+
+```yaml
+holidays_country: US          # required to enable the source
+holidays_subdiv:  ""          # optional state/province
+holidays_observed: true       # Sat/Sun holidays shift to Fri/Mon, as federal rules do
+holidays_remove:  [Columbus Day, Veterans Day, Washington's Birthday, Juneteenth]
+```
+
+`holidays_remove` is matched with `pop_named`, which also drops the
+"(observed)" twin — the Workday integration's own approach. Standing extras
+("Day after Thanksgiving", if wanted every year) are not a holidays knob:
+they are `base_dates` on the same set, or `#do` on Anderson for one year.
+
+The card cannot import the library, so a **service with a response**,
+`sb_scheduler.list_holidays {country, subdiv, year}`, returns the names for
+that country; the editor renders them as chips (ticked = a day off). "Still
+work Columbus Day" becomes un-ticking a chip, not typing a string that has to
+match.
+
+### New capability 2: subtract another day-set
+
+`base_day_set` already lets a set build **on** another (a base-tier source).
+Its mirror, `exclude_day_sets: [ids]`, makes other day-sets a **veto-tier**
+source: their dates are removed. Both kinds of edge feed
+`order_by_dependency`, so a cycle is refused at save time exactly as today.
+(`force_day_sets` would be the third mirror and is free once the edges exist;
+not built until something needs it.)
+
+This is the "day-set composition" the *Known wart* section deferred, arriving
+because something finally needs it.
+
+### The resulting graph
+
+| Day-set | Definition | Calendar |
+|---|---|---|
+| `holiday` | holidays source (US, remove the four, observed on) — all holidays, weekends included | `calendar.holiday` — new |
+| `workday` | mask Mon–Fri; **exclude_day_sets [holiday]**; exclude_calendars [anderson] match `#do`; force_calendars [anderson] match `#wd` | `calendar.workday` — same id, so the four live schedules are untouched |
+| `day_off` | mask Mon–Fri; exclude_day_sets [workday] | `calendar.day_off` — new; every non-working **weekday**: holidays, PTO, `#do` |
+| `weekend` | mask Sat–Sun (unchanged) | `calendar.weekend` |
+
+Decisions taken with the user (2026-09-21): Day Off is weekdays only, Weekend
+stays its own set; tags are `#do` (off) and `#wd` (work anyway); tags are read
+from the event **title only**; a **timed** `#do` event (half-day PTO) counts
+as a full day off; **no** `binary_sensor` per day-set (nothing consumed the
+old one); a **refresh button** is wanted.
+
+Assumed pending confirmation: the holiday list stays exactly today's rule
+(federal minus those four, observed shifts on). The two seeded Days Off
+entries (2026-11-27, 2026-12-24) are *not* carried over automatically — if
+they are real PTO the user re-adds them as `#do` on Anderson or as
+`exclude_dates` on Workday.
+
+### Matching becomes whole-token, title-only
+
+`*_match` today is a case-insensitive **substring** of summary *or*
+description, so `#do` would fire on "#done" and a note mentioning "#do" in
+passing would cancel a day. It becomes a case-insensitive **whole-token**
+match against the **title only**: the title is split on whitespace, trailing
+punctuation stripped, and a rule matches when one token equals it. The
+per-calendar rule syntax (`calendar.x: #do`) is unchanged. This is a
+deliberate breaking change — nothing live depends on description matching or
+on substrings (the "Workday" reinstate rule goes away with Days Off) — and it
+retires the open question about filtering Google's holiday feed by
+description: that feed is not a source any more.
+
+### Timed events cover every local date they touch
+
+An all-day event stays half-open (`[start, end)`). A timed event covers each
+local date from its start through its end, inclusive — except an end falling
+exactly on midnight, which is exclusive, so 22:00–00:00 is one day, not two.
+This is what makes a two-hour `#do` block a day off, per the decision above.
+
+### Refresh button
+
+`button.sb_scheduler_refresh` (button platform — a button is not a sensor) so
+the refresh can sit on any dashboard, plus a ↻ in the card header calling the
+same `sb_scheduler.refresh`. Both are for the impatient case: an event added
+to Anderson is otherwise seen within Google's ~15-minute poll plus our
+15-minute interval refresh (§CLAUDE.md).
+
+### Export
+
+The config entry is a `.storage` JSON file HA owns — backed up with HA,
+editable through the UI, but not something to diff or version. Cheap fix:
+config-entry **diagnostics** (`async_get_config_entry_diagnostics`) return
+the day-sets and schedules as JSON, downloadable from the integration page.
+No new service.
+
+### Migration and acceptance
+
+Build order: engine (holidays source, `exclude_day_sets`, token matching,
+timed-event dates) with offline tests → `list_holidays` service + button
+platform + diagnostics → card (holiday chips, minus-day-set chips, ↻) → live
+config: create `holiday`, rewrite `workday` in place, create `day_off` →
+delete the four scaffolds (Days Off local calendar, the template helper, both
+Workday entries).
+
+**Acceptance is a diff, not a feeling:** capture `calendar.workday`'s 400-day
+date list before the rewrite and after; the only differences allowed are the
+two seeded Days Off dates (which stop being off) and nothing else. Same for
+`calendar.day_off` against the complement of the old Workday calendar on
+weekdays. Then one real `#do` on Anderson, watched through to
+`calendar.day_off` within 30 minutes.
+
+**What this does not fix:** the work week is still written twice (Workday's
+and Day Off's Mon–Fri masks, Weekend's Sat–Sun). One named `work_week` mask
+that the others build on would end that; deferred again, because the user has
+one job and one week.
+
 ## Open questions
 
 - Whether day-sets should be shareable across config entries or scoped to one.
-- Whether `exclude` needs a title/description filter for calendar sources.
-  Relevant because `calendar.holidays_in_united_states` is the *Google* holiday
-  calendar and mixes public holidays with observances — Black Friday, Election
-  Day and "Daylight Saving Time ends" all appear alongside Thanksgiving,
-  distinguished only by the `description` field.
+- ~~Whether `exclude` needs a title/description filter for calendar sources.~~
+  Resolved: per-calendar match rules (v0.4.1), and the Google holiday feed is
+  no longer a candidate source once holidays are computed natively (§above).
