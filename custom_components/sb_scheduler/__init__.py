@@ -184,7 +184,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def async_refresh(_call: ServiceCall) -> None:
         for data in _entries(hass):
-            await data.day_sets.async_refresh()
+            await data.day_sets.async_refresh("service")
 
     async def async_create(call: ServiceCall) -> dict:
         data = _entries(hass)[0]

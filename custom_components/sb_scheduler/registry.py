@@ -120,8 +120,14 @@ class DaySetRegistry:
                 start = anchor
         return start
 
-    async def async_refresh(self) -> None:
-        """Recompute every day-set from today forward, in dependency order."""
+    async def async_refresh(self, reason: str = "setup") -> None:
+        """Recompute every day-set from today forward, in dependency order.
+
+        `reason` is only for the DEBUG line — it is what lets a log prove
+        which trigger fired (the interval tick leaves no other trace when
+        nothing changed).
+        """
+        started = dt_util.utcnow()
         today = dt_util.now().date()
         start = self._window_start(today)
         days = (today + datetime.timedelta(days=HORIZON_DAYS) - start).days
@@ -133,6 +139,12 @@ class DaySetRegistry:
                 base_set = set(base._eligible) if base else None
             await day_set.async_refresh(self.hass, start, days=days, base_set=base_set)
         async_dispatcher_send(self.hass, SIGNAL_DAY_SETS_UPDATED)
+        _LOGGER.debug(
+            "Refreshed %d day-set(s) in %.0f ms (%s)",
+            len(self.day_sets),
+            (dt_util.utcnow() - started).total_seconds() * 1000,
+            reason,
+        )
 
         # Boot ordering: a source calendar may not exist, or may exist but
         # not be serviceable, at the moment we run. The state-change listener
@@ -153,17 +165,19 @@ class DaySetRegistry:
 
     async def _handle_retry(self, _now) -> None:
         self._retry_unsub = None
-        await self.async_refresh()
+        await self.async_refresh("retry")
 
     async def _handle_midnight(self, _now) -> None:
-        await self.async_refresh()
+        await self.async_refresh("midnight")
 
     async def _handle_interval(self, _now) -> None:
-        await self.async_refresh()
+        await self.async_refresh("interval")
 
     @callback
     def _handle_source_change(self, event) -> None:
-        self.hass.async_create_task(self.async_refresh())
+        self.hass.async_create_task(
+            self.async_refresh(f"{event.data.get('entity_id')} changed")
+        )
 
     async def async_unload(self) -> None:
         for unsub in self._unsubs:
