@@ -27,7 +27,7 @@ def _start_of_local_day(d):
 
 dt_util.start_of_local_day = _start_of_local_day
 dt_util.as_local = lambda v: v
-dt_util.parse_datetime = lambda v: None
+dt_util.parse_datetime = lambda v: datetime.datetime.fromisoformat(v) if "T" in str(v) else None
 util.dt = dt_util
 sys.modules.update({
     "homeassistant": ha,
@@ -259,18 +259,48 @@ asyncio.run(ds.async_refresh(override, D("2026-11-23"), days=20))
 check("plain day-off is vetoed", ds.is_eligible(D("2026-11-27")), False)
 check("one titled 'Workday' is reinstated", ds.is_eligible(D("2026-11-30")), True)
 
-print("\nexclude_match filters by title/description")
+print("\nexclude_match is a whole-token match on the TITLE only")
 mixed = FakeHass({"calendar.hol": [
-    dict(allday("2026-11-26", "2026-11-27", "Thanksgiving Day"), description="Public holiday"),
-    dict(allday("2026-11-27", "2026-11-28", "Black Friday"), description="Observance"),
+    dict(allday("2026-11-23", "2026-11-24", "Dentist"), description="remember #do form"),
+    allday("2026-11-24", "2026-11-25", "#done with taxes"),
+    allday("2026-11-25", "2026-11-26", "Trip (#do)"),
+    allday("2026-11-26", "2026-11-27", "#DO"),
+    allday("2026-11-27", "2026-11-28", "day off - dentist"),
 ]})
-pub = DaySet(
+tagged = DaySet(
     id="h", name="H", weekdays=["mon", "tue", "wed", "thu", "fri"],
-    exclude_calendars=["calendar.hol"], exclude_match="Public holiday",
+    exclude_calendars=["calendar.hol"], exclude_match="#do",
 )
-asyncio.run(pub.async_refresh(mixed, D("2026-11-23"), days=10))
-check("a public holiday is excluded", pub.is_eligible(D("2026-11-26")), False)
-check("an observance is NOT", pub.is_eligible(D("2026-11-27")), True)
+asyncio.run(tagged.async_refresh(mixed, D("2026-11-23"), days=10))
+check("Mon: a tag in the DESCRIPTION is ignored", tagged.is_eligible(D("2026-11-23")), True)
+check("Tue: #done is not #do", tagged.is_eligible(D("2026-11-24")), True)
+check("Wed: (#do) with punctuation matches", tagged.is_eligible(D("2026-11-25")), False)
+check("Thu: case-insensitive", tagged.is_eligible(D("2026-11-26")), False)
+check("Fri: 'day off' does not match '#do'", tagged.is_eligible(D("2026-11-27")), True)
+phrase = DaySet(
+    id="h2", name="H2", weekdays=["mon", "tue", "wed", "thu", "fri"],
+    exclude_calendars=["calendar.hol"], exclude_match="day off",
+)
+asyncio.run(phrase.async_refresh(mixed, D("2026-11-23"), days=10))
+check("a multi-word rule matches a contiguous run of tokens", phrase.is_eligible(D("2026-11-27")), False)
+check("...and not the same words elsewhere", phrase.is_eligible(D("2026-11-23")), True)
+
+print("\ntimed events cover every local date they touch")
+def timed(start, end, summary="#do"):
+    return {"start": start, "end": end, "summary": summary}
+clock = FakeHass({"calendar.t": [
+    timed("2026-12-07T13:00:00-06:00", "2026-12-07T15:00:00-06:00"),   # Mon, two hours
+    timed("2026-12-08T22:00:00-06:00", "2026-12-09T02:00:00-06:00"),   # Tue night into Wed
+    timed("2026-12-10T22:00:00-06:00", "2026-12-11T00:00:00-06:00"),   # Thu evening, ends AT midnight
+]})
+half = DaySet(id="hd", name="HD", weekdays=["mon", "tue", "wed", "thu", "fri"],
+              exclude_calendars=["calendar.t"], exclude_match="#do")
+asyncio.run(half.async_refresh(clock, D("2026-12-07"), days=7))
+check("Mon: a two-hour #do is a day off", half.is_eligible(D("2026-12-07")), False)
+check("Tue: 22:00-02:00 covers Tue", half.is_eligible(D("2026-12-08")), False)
+check("Wed: ...and Wed", half.is_eligible(D("2026-12-09")), False)
+check("Thu: 22:00-00:00 covers Thu", half.is_eligible(D("2026-12-10")), False)
+check("Fri: ...but an end exactly at midnight is exclusive", half.is_eligible(D("2026-12-11")), True)
 
 print("\nmigration: legacy include_* is read as base")
 legacy = DaySet.from_config({
@@ -351,6 +381,59 @@ o, bad = order_by_dependency([{"id": "a", "base_day_set": "b"}, {"id": "b", "bas
 check("a cycle is reported, not hung", sorted(c["id"] for c in bad), ["a", "b"])
 o, bad = order_by_dependency([{"id": "x", "base_day_set": "ghost"}])
 check("a missing base is reported", [c["id"] for c in bad], ["x"])
+o, bad = order_by_dependency([
+    {"id": "day_off", "weekdays": MF, "exclude_day_sets": ["workday"]},
+    {"id": "workday", "weekdays": MF, "exclude_day_sets": ["holiday"]},
+    {"id": "holiday", "holidays_country": "US"},
+])
+ids = [c["id"] for c in o]
+check("subtracted sets come first (holiday < workday < day_off)",
+      ids.index("holiday") < ids.index("workday") < ids.index("day_off"), True)
+o, bad = order_by_dependency([{"id": "a", "exclude_day_sets": ["b"]}, {"id": "b", "base_day_set": "a"}])
+check("a cycle through a subtraction edge is reported", sorted(c["id"] for c in bad), ["a", "b"])
+
+print("\nexclude_day_sets: Day Off = Mon-Fri minus Workday")
+hol_days = {D("2026-11-26"), D("2026-12-25")}
+work = DaySet(id="workday", name="Workday", weekdays=MF)
+asyncio.run(work.async_refresh(nohass, D("2026-11-20"), days=45, exclude_set=hol_days))
+check("Thanksgiving is not a workday", work.is_eligible(D("2026-11-26")), False)
+check("the Friday after still is", work.is_eligible(D("2026-11-27")), True)
+off = DaySet(id="day_off", name="Day Off", weekdays=MF, exclude_day_sets=["workday"])
+asyncio.run(off.async_refresh(nohass, D("2026-11-20"), days=45, exclude_set=set(work._eligible)))
+check("Thanksgiving IS a day off", off.is_eligible(D("2026-11-26")), True)
+check("Christmas IS a day off", off.is_eligible(D("2026-12-25")), True)
+check("a Saturday is NOT (weekend is its own set)", off.is_eligible(D("2026-11-28")), False)
+check("a plain Wednesday is NOT", off.is_eligible(D("2026-12-02")), False)
+check("depends_on lists the subtracted set", off.depends_on, ["workday"])
+
+print("\nholidays source (needs the `holidays` library; skipped without it)")
+if _day_set._holidays_lib is None:
+    print("  skip — holidays not importable here")
+else:
+    names = _day_set.holiday_names("US")
+    check("US names include Thanksgiving", "Thanksgiving Day" in names, True)
+    check("unknown country -> None", _day_set.holiday_names("ZZ"), None)
+    hol = DaySet(id="holiday", name="Holiday", holidays_country="US",
+                 holidays_remove=["Columbus Day", "Veterans Day", "Washington's Birthday",
+                                  "Juneteenth National Independence Day"])
+    asyncio.run(hol.async_refresh(nohass, D("2026-01-01"), days=365))
+    check("Thanksgiving 2026-11-26", hol.is_eligible(D("2026-11-26")), True)
+    check("Christmas 2026-12-25", hol.is_eligible(D("2026-12-25")), True)
+    check("Columbus Day removed (2026-10-12)", hol.is_eligible(D("2026-10-12")), False)
+    check("Veterans Day removed (2026-11-11)", hol.is_eligible(D("2026-11-11")), False)
+    check("Washington's Birthday removed (2026-02-16)", hol.is_eligible(D("2026-02-16")), False)
+    check("Juneteenth removed (2026-06-19)", hol.is_eligible(D("2026-06-19")), False)
+    check("July 4 2026 is a Saturday: observed Friday 07-03", hol.is_eligible(D("2026-07-03")), True)
+    check("...and the Saturday itself is listed too", hol.is_eligible(D("2026-07-04")), True)
+    check("a plain Wednesday is not a holiday", hol.is_eligible(D("2026-03-04")), False)
+    noobs = DaySet(id="h2", name="H2", holidays_country="US", holidays_observed=False)
+    asyncio.run(noobs.async_refresh(nohass, D("2026-01-01"), days=365))
+    check("observed off: Friday 07-03 is NOT a holiday", noobs.is_eligible(D("2026-07-03")), False)
+    check("validate: unknown country flagged",
+          _day_set.validate_day_set({"name": "X", "holidays_country": "ZZ"}, [], None).get("base"),
+          "holidays_country")
+    check("validate: a known country passes",
+          _day_set.validate_day_set({"name": "X", "holidays_country": "us"}, [], None), {})
 
 print("\npick=every: every Nth ELIGIBLE date from an anchor")
 e3 = DaySet(id="e3", name="Every 3rd day", weekdays=ALL,
@@ -561,6 +644,14 @@ check("an indirect cycle (monday -> election_day -> monday)",
       validate({"name": "Monday", "base_day_set": "election_day"}, existing, "monday").get("base"), "base_cycle")
 check("a legitimate chain is allowed",
       validate({"name": "Y", "base_day_set": "election_day"}, existing, None), {})
+check("subtracting a missing set",
+      validate({"name": "X", "exclude_day_sets": ["ghost"]}, existing, None).get("base"), "base_missing")
+check("subtracting yourself",
+      validate({"name": "Monday", "exclude_day_sets": ["monday"]}, existing, "monday").get("base"), "base_cycle")
+check("a cycle through a subtraction (monday minus election_day, which builds on monday)",
+      validate({"name": "Monday", "exclude_day_sets": ["election_day"]}, existing, "monday").get("base"), "base_cycle")
+check("subtracting an unrelated set is fine",
+      validate({"name": "Z", "weekdays": ["mon"], "exclude_day_sets": ["election_day"]}, existing, None), {})
 check("every code has a message",
       all(c in _day_set.VALIDATION_MESSAGES for c in
           ("invalid_dates", "anchor_required", "base_cycle", "base_missing", "name_required")), True)
@@ -617,7 +708,7 @@ wd = DaySet(id="w", name="Workday", base_calendars=["calendar.workday"],
 asyncio.run(wd.async_refresh(two, D("2026-09-20"), days=10))
 check("Mon: plain workday", wd.is_eligible(D("2026-09-21")), True)
 check("Tue: days_off cancels on ANY entry (no #do needed)", wd.is_eligible(D("2026-09-22")), False)
-check("Wed: '#do' in the DESCRIPTION cancels", wd.is_eligible(D("2026-09-23")), False)
+check("Wed: '#do' only in the DESCRIPTION does NOT cancel (title only)", wd.is_eligible(D("2026-09-23")), True)
 check("Thu: an untagged Anderson entry does NOT cancel", wd.is_eligible(D("2026-09-24")), True)
 check("Fri: an all-day event TITLED #do cancels", wd.is_eligible(D("2026-09-25")), False)
 

@@ -24,7 +24,6 @@ from homeassistant.util import slugify
 
 from .const import (
     CONF_ACTIONS,
-    CONF_BASE_DAY_SET,
     CONF_DAY_SET,
     CONF_DAY_SETS,
     CONF_ENABLED,
@@ -39,8 +38,11 @@ from .const import (
 )
 from .day_set import (
     DAY_SET_FIELDS,
+    LEGACY_FIELDS,
     VALIDATION_MESSAGES,
     allocate_day_set_id,
+    depends_on,
+    holiday_names,
     validate_day_set,
 )
 from .registry import DaySetRegistry
@@ -48,7 +50,7 @@ from .schedule_store import ScheduleStore
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["calendar", "switch", "sensor"]
+PLATFORMS = ["calendar", "switch", "sensor", "button"]
 
 SERVICE_QUERY = "query_day_set"
 SERVICE_REFRESH = "refresh"
@@ -57,6 +59,7 @@ SERVICE_EDIT = "edit_schedule"
 SERVICE_REMOVE = "remove_schedule"
 SERVICE_SET_DAY_SET = "set_day_set"
 SERVICE_REMOVE_DAY_SET = "remove_day_set"
+SERVICE_LIST_HOLIDAYS = "list_holidays"
 
 # The card's write path for day-sets. Permissive on purpose: the known fields
 # are filtered out afterwards, and validate_day_set decides what is allowed,
@@ -66,6 +69,13 @@ DAY_SET_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 REMOVE_DAY_SET_SCHEMA = vol.Schema({vol.Required(CONF_ID): cv.string})
+LIST_HOLIDAYS_SCHEMA = vol.Schema(
+    {
+        vol.Required("country"): cv.string,
+        vol.Optional("subdiv", default=""): cv.string,
+        vol.Optional("year"): vol.Coerce(int),
+    }
+)
 
 QUERY_SCHEMA = vol.Schema(
     {vol.Required("day_set"): cv.string, vol.Optional("date"): cv.date}
@@ -150,6 +160,7 @@ def _purge_orphaned_entities(
         f"{entry.entry_id}_schedule_{sid}" for sid in data.schedules.schedules
     }
     valid.add(f"{entry.entry_id}_day_sets")   # the roster sensor
+    valid.add(f"{entry.entry_id}_refresh")    # the refresh button
     for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
         if entity.unique_id not in valid:
             _LOGGER.debug("Removing orphaned entity %s", entity.entity_id)
@@ -180,7 +191,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 "eligible": day_set.is_eligible(day),
                 "next_date": next_date.isoformat() if next_date else None,
             }
-        raise vol.Invalid(f"Unknown day-set '{call.data['day_set']}'")
+        raise vol.Invalid(f"Unknown day type '{call.data['day_set']}'")
 
     async def async_refresh(_call: ServiceCall) -> None:
         for data in _entries(hass):
@@ -189,7 +200,7 @@ def _register_services(hass: HomeAssistant) -> None:
     async def async_create(call: ServiceCall) -> dict:
         data = _entries(hass)[0]
         if call.data.get(CONF_DAY_SET) and not data.day_sets.get(call.data[CONF_DAY_SET]):
-            raise vol.Invalid(f"Unknown day-set '{call.data[CONF_DAY_SET]}'")
+            raise vol.Invalid(f"Unknown day type '{call.data[CONF_DAY_SET]}'")
         schedule = data.schedules.async_create(dict(call.data))
         async_dispatcher_send(hass, SIGNAL_SCHEDULES_UPDATED)
         return {CONF_SCHEDULE_ID: schedule[CONF_SCHEDULE_ID], "name": schedule["name"]}
@@ -224,13 +235,20 @@ def _register_services(hass: HomeAssistant) -> None:
         flat = {k: v for k, v in call.data.items() if k in DAY_SET_FIELDS}
         editing = call.data.get(CONF_ID) or None
         if editing and not any(d[CONF_ID] == editing for d in day_sets):
-            raise ServiceValidationError(f"Unknown day-set '{editing}'")
+            raise ServiceValidationError(f"Unknown day type '{editing}'")
         errors = validate_day_set(flat, day_sets, editing)
         if errors:
             code = errors.get("base") or next(iter(errors.values()))
             raise ServiceValidationError(VALIDATION_MESSAGES.get(code, code))
         if editing:
-            day_sets = [{**d, **flat} if d[CONF_ID] == editing else d for d in day_sets]
+            # An update REPLACES the editable fields, legacy spellings included:
+            # a stale `include_calendars` left beside an empty `base_calendars`
+            # would be read as the base tier and silently keep an old source.
+            day_sets = [
+                {**{k: v for k, v in d.items() if k not in DAY_SET_FIELDS and k not in LEGACY_FIELDS}, **flat}
+                if d[CONF_ID] == editing else d
+                for d in day_sets
+            ]
             ds_id = editing
         else:
             ds_id = allocate_day_set_id(flat[CONF_NAME], {d[CONF_ID] for d in day_sets}, slugify)
@@ -247,13 +265,13 @@ def _register_services(hass: HomeAssistant) -> None:
         ds_id = call.data[CONF_ID]
         day_sets = list(entry.options.get(CONF_DAY_SETS, []))
         if not any(d[CONF_ID] == ds_id for d in day_sets):
-            raise ServiceValidationError(f"Unknown day-set '{ds_id}'")
+            raise ServiceValidationError(f"Unknown day type '{ds_id}'")
         users: list[str] = []
         for data in _entries(hass):
             users += [f"schedule '{s.get('name')}'" for s in data.schedules.schedules.values()
                       if s.get(CONF_DAY_SET) == ds_id]
-        users += [f"day-set '{d.get(CONF_NAME)}'" for d in day_sets
-                  if d.get(CONF_BASE_DAY_SET) == ds_id]
+        users += [f"day type '{d.get(CONF_NAME)}'" for d in day_sets
+                  if ds_id in depends_on(d)]
         if users:
             raise ServiceValidationError(
                 f"'{ds_id}' is still used by {', '.join(users)}. Change those first."
@@ -262,6 +280,20 @@ def _register_services(hass: HomeAssistant) -> None:
             entry, options={**entry.options, CONF_DAY_SETS: [d for d in day_sets if d[CONF_ID] != ds_id]}
         )
 
+    async def async_list_holidays(call: ServiceCall) -> dict:
+        """The holiday names the library knows for a country, so the card can
+        offer "which of these do you still work?" as chips rather than a
+        free-text field that has to match a name exactly."""
+        names = holiday_names(call.data["country"], call.data.get("subdiv") or "",
+                              call.data.get("year"))
+        if names is None:
+            raise ServiceValidationError(VALIDATION_MESSAGES["holidays_country"])
+        return {"country": call.data["country"].upper(), "names": names}
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_LIST_HOLIDAYS, async_list_holidays, schema=LIST_HOLIDAYS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_DAY_SET, async_set_day_set, schema=DAY_SET_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
@@ -300,7 +332,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for service in (
                 SERVICE_QUERY, SERVICE_REFRESH, SERVICE_CREATE,
                 SERVICE_EDIT, SERVICE_REMOVE,
-                SERVICE_SET_DAY_SET, SERVICE_REMOVE_DAY_SET,
+                SERVICE_SET_DAY_SET, SERVICE_REMOVE_DAY_SET, SERVICE_LIST_HOLIDAYS,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unloaded

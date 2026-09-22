@@ -1,7 +1,7 @@
 """Config and options flow.
 
-Day-sets are defined here rather than in YAML — the whole point is that adding
-"School Day" is a visual act, not a file edit.
+Day types (`day_set` in code) are defined here rather than in YAML — the
+whole point is that adding "School Day" is a visual act, not a file edit.
 """
 
 from __future__ import annotations
@@ -35,11 +35,16 @@ from .const import (
     CONF_DAY_SETS,
     CONF_EXCLUDE_CALENDARS,
     CONF_EXCLUDE_DATES,
+    CONF_EXCLUDE_DAY_SETS,
     CONF_EXCLUDE_MATCH,
     CONF_EXPOSE_CALENDAR,
     CONF_FORCE_CALENDARS,
     CONF_FORCE_DATES,
     CONF_FORCE_MATCH,
+    CONF_HOLIDAYS_COUNTRY,
+    CONF_HOLIDAYS_OBSERVED,
+    CONF_HOLIDAYS_REMOVE,
+    CONF_HOLIDAYS_SUBDIV,
     CONF_ID,
     CONF_INVERT,
     CONF_MONTHS,
@@ -50,7 +55,6 @@ from .const import (
     CONF_PICK_EVERY,
     CONF_PICK_NTH,
     CONF_WEEKDAYS,
-    CONF_WORKDAY_CALENDAR,
     DOMAIN,
     MAX_OFFSET_DAYS,
     PICK_EVERY,
@@ -59,7 +63,7 @@ from .const import (
     PICK_NTH_OPTIONS,
     WEEKDAYS,
 )
-from .day_set import allocate_day_set_id, validate_day_set
+from .day_set import allocate_day_set_id, holiday_names, validate_day_set
 
 CALENDARS = EntitySelector(EntitySelectorConfig(domain="calendar", multiple=True))
 DATES = TextSelector(
@@ -110,8 +114,11 @@ NO_BASE = "__none__"
 # The form is FIVE collapsible sections, because twenty flat fields is a wall.
 # Stored config stays flat; these lists are what flatten() folds back in.
 SECTIONS: dict[str, list[str]] = {
-    "sources": [CONF_WEEKDAYS, CONF_BASE_DAY_SET, CONF_BASE_CALENDARS, CONF_BASE_DATES],
-    "cancelled": [CONF_EXCLUDE_CALENDARS, CONF_EXCLUDE_DATES, CONF_EXCLUDE_MATCH],
+    "sources": [CONF_WEEKDAYS, CONF_BASE_DAY_SET, CONF_BASE_CALENDARS, CONF_BASE_DATES,
+                CONF_HOLIDAYS_COUNTRY, CONF_HOLIDAYS_SUBDIV, CONF_HOLIDAYS_OBSERVED,
+                CONF_HOLIDAYS_REMOVE],
+    "cancelled": [CONF_EXCLUDE_DAY_SETS, CONF_EXCLUDE_CALENDARS, CONF_EXCLUDE_DATES,
+                  CONF_EXCLUDE_MATCH],
     "always": [CONF_FORCE_CALENDARS, CONF_FORCE_DATES, CONF_FORCE_MATCH],
     "pick": [CONF_PICK, CONF_PICK_EVERY, CONF_PICK_ANCHOR, CONF_PICK_NTH, CONF_MONTHS],
     "advanced": [CONF_INVERT, CONF_OFFSET_DAYS, CONF_EXPOSE_CALENDAR],
@@ -128,6 +135,8 @@ def flatten(user_input: dict) -> dict:
     for key in (CONF_PICK_EVERY, CONF_OFFSET_DAYS):
         if key in flat and flat[key] is not None:
             flat[key] = int(flat[key])
+    flat[CONF_HOLIDAYS_COUNTRY] = (flat.get(CONF_HOLIDAYS_COUNTRY) or "").strip().upper()
+    flat[CONF_HOLIDAYS_SUBDIV] = (flat.get(CONF_HOLIDAYS_SUBDIV) or "").strip().upper()
     return flat
 
 
@@ -149,11 +158,26 @@ def day_set_schema(defaults: dict | None, others: list[dict]) -> vol.Schema:
     def has(*keys) -> bool:
         return any(d.get(k) for k in keys)
 
+    other_opts = [{"value": o[CONF_ID], "label": o[CONF_NAME]} for o in others]
     base_picker = SelectSelector(
         SelectSelectorConfig(
-            options=[{"value": NO_BASE, "label": "—"}]
-            + [{"value": o[CONF_ID], "label": o[CONF_NAME]} for o in others],
+            options=[{"value": NO_BASE, "label": "—"}] + other_opts,
             mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
+    minus_picker = SelectSelector(
+        SelectSelectorConfig(options=other_opts, multiple=True, mode=SelectSelectorMode.LIST)
+    )
+    # The holiday names to offer come from the country ALREADY saved (or just
+    # submitted): the form is static per render, so a new country shows its
+    # names after one save. Custom values are allowed for that first pass.
+    country = (d.get(CONF_HOLIDAYS_COUNTRY) or "").strip()
+    names = (holiday_names(country, d.get(CONF_HOLIDAYS_SUBDIV) or "") if country else None) or []
+    removed = list(d.get(CONF_HOLIDAYS_REMOVE) or [])
+    remove_picker = SelectSelector(
+        SelectSelectorConfig(
+            options=sorted(set(names) | set(removed)), multiple=True, custom_value=True,
+            mode=SelectSelectorMode.LIST if names else SelectSelectorMode.DROPDOWN,
         )
     )
 
@@ -164,8 +188,17 @@ def day_set_schema(defaults: dict | None, others: list[dict]) -> vol.Schema:
         ): base_picker,
         vol.Optional(CONF_BASE_CALENDARS, default=base_cals): CALENDARS,
         vol.Optional(CONF_BASE_DATES, default=base_dates): DATES,
+        vol.Optional(CONF_HOLIDAYS_COUNTRY, default=country): TEXT,
+        vol.Optional(CONF_HOLIDAYS_SUBDIV, default=d.get(CONF_HOLIDAYS_SUBDIV) or ""): TEXT,
+        vol.Optional(
+            CONF_HOLIDAYS_OBSERVED, default=d.get(CONF_HOLIDAYS_OBSERVED, True)
+        ): BooleanSelector(),
+        vol.Optional(CONF_HOLIDAYS_REMOVE, default=removed): remove_picker,
     }
     cancelled = {
+        vol.Optional(
+            CONF_EXCLUDE_DAY_SETS, default=list(d.get(CONF_EXCLUDE_DAY_SETS) or [])
+        ): minus_picker,
         vol.Optional(
             CONF_EXCLUDE_CALENDARS, default=d.get(CONF_EXCLUDE_CALENDARS, [])
         ): CALENDARS,
@@ -210,7 +243,7 @@ def day_set_schema(defaults: dict | None, others: list[dict]) -> vol.Schema:
             vol.Required("sources"): section(vol.Schema(sources), {"collapsed": False}),
             vol.Required("cancelled"): section(
                 vol.Schema(cancelled),
-                {"collapsed": not has(CONF_EXCLUDE_CALENDARS, CONF_EXCLUDE_DATES)},
+                {"collapsed": not has(CONF_EXCLUDE_DAY_SETS, CONF_EXCLUDE_CALENDARS, CONF_EXCLUDE_DATES)},
             ),
             vol.Required("always"): section(
                 vol.Schema(always),
@@ -227,35 +260,30 @@ def day_set_schema(defaults: dict | None, others: list[dict]) -> vol.Schema:
 _validate = validate_day_set
 
 
-def _seed_day_sets(workday_calendar: str | None,
-                   days_off_calendar: str | None = None) -> list[dict]:
-    """Start with something usable rather than an empty list."""
+WORK_WEEK = ["mon", "tue", "wed", "thu", "fri"]
+
+
+def _seed_day_sets(country: str) -> list[dict]:
+    """Start with something usable rather than an empty list.
+
+    With a country: Holiday (native), Workday = Mon–Fri minus Holiday, and
+    Day Off = Mon–Fri minus Workday — no other integration involved. Tags on
+    a personal calendar (#do / #wd) are added afterwards, in the editor.
+    """
     day_sets = [
-        {
-            CONF_ID: "daily",
-            CONF_NAME: "Daily",
-            CONF_WEEKDAYS: list(WEEKDAYS),
-        },
-        {
-            CONF_ID: "weekend",
-            CONF_NAME: "Weekend",
-            # Literally Saturday and Sunday. "Non-workday" is its own thing --
-            # conflating the two is the wart this project exists to remove.
-            CONF_WEEKDAYS: ["sat", "sun"],
-        },
+        {CONF_ID: "daily", CONF_NAME: "Daily", CONF_WEEKDAYS: list(WEEKDAYS)},
+        # Literally Saturday and Sunday. "Day Off" is its own thing --
+        # conflating the two is the wart this project exists to remove.
+        {CONF_ID: "weekend", CONF_NAME: "Weekend", CONF_WEEKDAYS: ["sat", "sun"]},
     ]
-    if workday_calendar:
-        # Base = the workday calendar; PTO vetoes it; a days-off entry titled
-        # "Workday" reinstates it. Wired only if a days-off calendar exists.
-        shape = {CONF_BASE_CALENDARS: [workday_calendar]}
-        if days_off_calendar:
-            shape[CONF_EXCLUDE_CALENDARS] = [days_off_calendar]
-            shape[CONF_FORCE_CALENDARS] = [days_off_calendar]
-            shape[CONF_FORCE_MATCH] = "Workday"
+    if country:
         day_sets += [
-            {CONF_ID: "workday", CONF_NAME: "Workday", **shape},
-            {CONF_ID: "non_workday", CONF_NAME: "Non-workday", **shape,
-             CONF_INVERT: True},
+            {CONF_ID: "holiday", CONF_NAME: "Holiday",
+             CONF_HOLIDAYS_COUNTRY: country, CONF_HOLIDAYS_OBSERVED: True},
+            {CONF_ID: "workday", CONF_NAME: "Workday",
+             CONF_WEEKDAYS: list(WORK_WEEK), CONF_EXCLUDE_DAY_SETS: ["holiday"]},
+            {CONF_ID: "day_off", CONF_NAME: "Day Off",
+             CONF_WEEKDAYS: list(WORK_WEEK), CONF_EXCLUDE_DAY_SETS: ["workday"]},
         ]
     return day_sets
 
@@ -269,30 +297,24 @@ class SbSchedulerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
 
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(
-                title="SB Scheduler",
-                data={},
-                options={
-                    CONF_DAY_SETS: _seed_day_sets(
-                        user_input.get(CONF_WORKDAY_CALENDAR),
-                        user_input.get("days_off_calendar"),
-                    )
-                },
-            )
+            country = (user_input.get(CONF_HOLIDAYS_COUNTRY) or "").strip().upper()
+            if country and holiday_names(country) is None:
+                errors["base"] = "holidays_country"
+            else:
+                return self.async_create_entry(
+                    title="SB Scheduler",
+                    data={},
+                    options={CONF_DAY_SETS: _seed_day_sets(country)},
+                )
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
-                {
-                    vol.Optional(CONF_WORKDAY_CALENDAR): EntitySelector(
-                        EntitySelectorConfig(domain="calendar")
-                    ),
-                    vol.Optional("days_off_calendar"): EntitySelector(
-                        EntitySelectorConfig(domain="calendar")
-                    ),
-                }
+                {vol.Optional(CONF_HOLIDAYS_COUNTRY, default="US"): TEXT}
             ),
+            errors=errors,
         )
 
     @staticmethod

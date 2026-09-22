@@ -4,12 +4,14 @@
     "step": {
       "user": {
         "title": "SB Scheduler",
-        "description": "Day-sets are named groups of dates — Workday, School Day, Trash Day — that schedules can run against. Pick a workday calendar and Workday and Non-workday are created for you; add a days-off calendar too and time off will cancel a workday, while an entry titled \"Workday\" reinstates one.\n\nThe Workday integration publishes a workday calendar (typically calendar.workday_sensor_us_calendar). Leave both empty to start with just Daily and Weekend.",
+        "description": "Day types are named rules about which dates count — Workday, Holiday, Day Off, Trash Day — that schedules run on. Each one can be shown in the calendar panel.\n\nGive a country code and Holiday, Workday (Mon–Fri minus holidays) and Day Off (Mon–Fri minus workdays) are created for you, computed here with no other integration. Leave it empty to start with just Daily and Weekend.",
         "data": {
-          "workday_calendar": "Workday calendar (optional)",
-          "days_off_calendar": "Days-off calendar (optional)"
+          "holidays_country": "Country for holidays (ISO code, e.g. US)"
         }
       }
+    },
+    "error": {
+      "holidays_country": "Unknown country code for holidays."
     },
     "abort": {
       "single_instance_allowed": "SB Scheduler is already set up."
@@ -18,16 +20,16 @@
   "options": {
     "step": {
       "init": {
-        "title": "Day-sets",
+        "title": "Day types",
         "menu_options": {
-          "add": "Add a day-set",
-          "pick_edit": "Edit a day-set",
-          "pick_remove": "Remove a day-set"
+          "add": "Add a day type",
+          "pick_edit": "Edit a day type",
+          "pick_remove": "Remove a day type"
         }
       },
       "add": {
-        "title": "Add a day-set",
-        "description": "A day-set is a named group of dates. Start from weekdays, calendars, typed dates, or another day-set; then optionally narrow it to a cadence or an ordinal.\n\nPrecedence is Always › Cancelled › Sources. Dates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+        "title": "Add a day type",
+        "description": "A day type is a rule about which dates count. Start from weekdays, holidays, calendars, typed dates, or another day type; subtract other day types; then optionally narrow it to a cadence or an ordinal.\n\nPrecedence is Always › Cancelled › Sources. Dates accept single days and ranges: 2026-12-25, 2027-06-05..2027-08-17",
         "data": {
           "name": "Name"
         },
@@ -37,27 +39,37 @@
             "description": "Any of these, combined.",
             "data": {
               "weekdays": "Weekdays",
-              "base_day_set": "Built on another day-set",
+              "base_day_set": "Built on another day type",
               "base_calendars": "Calendars",
-              "base_dates": "Dates"
+              "base_dates": "Dates",
+              "holidays_country": "Holidays: country code",
+              "holidays_subdiv": "Holidays: state or region code",
+              "holidays_observed": "Holidays: shift weekend holidays to the observed weekday",
+              "holidays_remove": "Holidays you still work"
             },
             "data_description": {
-              "weekdays": "Leave empty if the day-set comes entirely from a calendar or another day-set.",
-              "base_day_set": "Start from that day-set's dates — e.g. Monday, to build \"first Monday of the month\" without a calendar.",
-              "base_calendars": "e.g. the Workday integration's calendar, or the trash-collection calendar.",
-              "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17"
+              "weekdays": "Leave empty if the day type comes entirely from holidays, a calendar or another day type.",
+              "base_day_set": "Start from that day type's dates — e.g. Monday, to build \"first Monday of the month\" without a calendar.",
+              "base_calendars": "e.g. the trash-collection calendar. Not needed for holidays — see below.",
+              "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+              "holidays_country": "ISO code such as US, CA, GB. Public holidays are computed here — no Workday integration or holiday calendar needed.",
+              "holidays_subdiv": "Optional, e.g. IL for Illinois-only holidays.",
+              "holidays_observed": "On: a holiday falling on Saturday counts on Friday, Sunday on Monday — as federal offices do.",
+              "holidays_remove": "Pick the ones that are ordinary days for you (Columbus Day, Veterans Day…). The list fills in after the country is saved once."
             }
           },
           "cancelled": {
             "name": "Cancelled — what takes a day back out",
             "data": {
+              "exclude_day_sets": "Minus these day types",
               "exclude_calendars": "Cancelled by these calendars",
               "exclude_dates": "…and these dates",
-              "exclude_match": "Only cancel when the entry matches"
+              "exclude_match": "Only cancel when the entry's title has"
             },
             "data_description": {
-              "exclude_calendars": "e.g. a days-off calendar for time off.",
-              "exclude_match": "Optional text matched against an event's title or description, so only some entries cancel. A bare word applies to every calendar in this tier; a line like `calendar.anderson: #do` applies to that calendar only (one rule per line, or separated by ;). Leave empty to cancel on any entry."
+              "exclude_day_sets": "Their dates are removed. Workday = Mon–Fri minus Holiday; Day Off = Mon–Fri minus Workday.",
+              "exclude_calendars": "e.g. your own calendar, with a tag rule below.",
+              "exclude_match": "A word or tag matched against an event's TITLE, whole words only — #do does not match #done, and notes are not read. A bare word applies to every calendar in this tier; a line like `calendar.anderson: #do` applies to that calendar only (one rule per line, or separated by ;). Leave empty to cancel on any entry."
             }
           },
           "always": {
@@ -65,11 +77,11 @@
             "data": {
               "force_calendars": "Always included by these calendars",
               "force_dates": "…and these dates",
-              "force_match": "Only force when the entry matches"
+              "force_match": "Only force when the entry's title has"
             },
             "data_description": {
               "force_calendars": "These win over everything, including the cancellations above.",
-              "force_match": "Optional text matched against an event's title or description — e.g. \"Workday\" so only a days-off entry named that reinstates a workday. Per-calendar rules work here too: `calendar.anderson: #wd`."
+              "force_match": "Same rules as above — e.g. `calendar.anderson: #wd` so a tagged entry makes a day a workday after all."
             }
           },
           "pick": {
@@ -92,14 +104,14 @@
           "advanced": {
             "name": "Advanced",
             "data": {
-              "invert": "Invert (every date NOT in this set)",
+              "invert": "Invert (every date NOT in this day type)",
               "offset_days": "Shift by (days)",
-              "expose_calendar": "Show as a calendar entity"
+              "expose_calendar": "Show in the HA calendar panel"
             },
             "data_description": {
-              "invert": "Turns Workday into Non-workday without configuring it twice.",
-              "offset_days": "Moves every date in the set. -1 gives \"the night before\"; +1 after the first Monday of November gives Election Day. Applied last.",
-              "expose_calendar": "Off is right for a derived set like \"every other Tuesday\" that nobody needs to see in the Calendar panel. It stays selectable in the card either way."
+              "invert": "Every date that is not in the rule above.",
+              "offset_days": "Moves every date. -1 gives \"the night before\"; +1 after the first Monday of November gives Election Day. Applied last.",
+              "expose_calendar": "Publishes this day type as a calendar entity. Off is right for a helper like \"every other Tuesday\" that nobody needs to see. It stays selectable in the card either way."
             }
           }
         }
@@ -116,27 +128,37 @@
             "description": "Any of these, combined.",
             "data": {
               "weekdays": "Weekdays",
-              "base_day_set": "Built on another day-set",
+              "base_day_set": "Built on another day type",
               "base_calendars": "Calendars",
-              "base_dates": "Dates"
+              "base_dates": "Dates",
+              "holidays_country": "Holidays: country code",
+              "holidays_subdiv": "Holidays: state or region code",
+              "holidays_observed": "Holidays: shift weekend holidays to the observed weekday",
+              "holidays_remove": "Holidays you still work"
             },
             "data_description": {
-              "weekdays": "Leave empty if the day-set comes entirely from a calendar or another day-set.",
-              "base_day_set": "Start from that day-set's dates — e.g. Monday, to build \"first Monday of the month\" without a calendar.",
-              "base_calendars": "e.g. the Workday integration's calendar, or the trash-collection calendar.",
-              "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17"
+              "weekdays": "Leave empty if the day type comes entirely from holidays, a calendar or another day type.",
+              "base_day_set": "Start from that day type's dates — e.g. Monday, to build \"first Monday of the month\" without a calendar.",
+              "base_calendars": "e.g. the trash-collection calendar. Not needed for holidays — see below.",
+              "base_dates": "Single dates and ranges: 2026-12-25, 2027-06-05..2027-08-17",
+              "holidays_country": "ISO code such as US, CA, GB. Public holidays are computed here — no Workday integration or holiday calendar needed.",
+              "holidays_subdiv": "Optional, e.g. IL for Illinois-only holidays.",
+              "holidays_observed": "On: a holiday falling on Saturday counts on Friday, Sunday on Monday — as federal offices do.",
+              "holidays_remove": "Pick the ones that are ordinary days for you (Columbus Day, Veterans Day…). The list fills in after the country is saved once."
             }
           },
           "cancelled": {
             "name": "Cancelled — what takes a day back out",
             "data": {
+              "exclude_day_sets": "Minus these day types",
               "exclude_calendars": "Cancelled by these calendars",
               "exclude_dates": "…and these dates",
-              "exclude_match": "Only cancel when the entry matches"
+              "exclude_match": "Only cancel when the entry's title has"
             },
             "data_description": {
-              "exclude_calendars": "e.g. a days-off calendar for time off.",
-              "exclude_match": "Optional text matched against an event's title or description, so only some entries cancel. A bare word applies to every calendar in this tier; a line like `calendar.anderson: #do` applies to that calendar only (one rule per line, or separated by ;). Leave empty to cancel on any entry."
+              "exclude_day_sets": "Their dates are removed. Workday = Mon–Fri minus Holiday; Day Off = Mon–Fri minus Workday.",
+              "exclude_calendars": "e.g. your own calendar, with a tag rule below.",
+              "exclude_match": "A word or tag matched against an event's TITLE, whole words only — #do does not match #done, and notes are not read. A bare word applies to every calendar in this tier; a line like `calendar.anderson: #do` applies to that calendar only (one rule per line, or separated by ;). Leave empty to cancel on any entry."
             }
           },
           "always": {
@@ -144,11 +166,11 @@
             "data": {
               "force_calendars": "Always included by these calendars",
               "force_dates": "…and these dates",
-              "force_match": "Only force when the entry matches"
+              "force_match": "Only force when the entry's title has"
             },
             "data_description": {
               "force_calendars": "These win over everything, including the cancellations above.",
-              "force_match": "Optional text matched against an event's title or description — e.g. \"Workday\" so only a days-off entry named that reinstates a workday. Per-calendar rules work here too: `calendar.anderson: #wd`."
+              "force_match": "Same rules as above — e.g. `calendar.anderson: #wd` so a tagged entry makes a day a workday after all."
             }
           },
           "pick": {
@@ -171,40 +193,41 @@
           "advanced": {
             "name": "Advanced",
             "data": {
-              "invert": "Invert (every date NOT in this set)",
+              "invert": "Invert (every date NOT in this day type)",
               "offset_days": "Shift by (days)",
-              "expose_calendar": "Show as a calendar entity"
+              "expose_calendar": "Show in the HA calendar panel"
             },
             "data_description": {
-              "invert": "Turns Workday into Non-workday without configuring it twice.",
-              "offset_days": "Moves every date in the set. -1 gives \"the night before\"; +1 after the first Monday of November gives Election Day. Applied last.",
-              "expose_calendar": "Off is right for a derived set like \"every other Tuesday\" that nobody needs to see in the Calendar panel. It stays selectable in the card either way."
+              "invert": "Every date that is not in the rule above.",
+              "offset_days": "Moves every date. -1 gives \"the night before\"; +1 after the first Monday of November gives Election Day. Applied last.",
+              "expose_calendar": "Publishes this day type as a calendar entity. Off is right for a helper like \"every other Tuesday\" that nobody needs to see. It stays selectable in the card either way."
             }
           }
         }
       },
       "pick_edit": {
-        "title": "Edit a day-set",
+        "title": "Edit a day type",
         "data": {
-          "id": "Day-set"
+          "id": "Day type"
         }
       },
       "pick_remove": {
-        "title": "Remove a day-set",
-        "description": "Its calendar entity is removed too. Schedules using it, and day-sets built on it, will stop matching.",
+        "title": "Remove a day type",
+        "description": "Its calendar entity is removed too. Schedules using it, and day types built on it or subtracting it, will stop matching.",
         "data": {
-          "id": "Day-set"
+          "id": "Day type"
         }
       }
     },
     "error": {
       "invalid_dates": "Could not read those dates. Use YYYY-MM-DD, separated by commas, with ranges written as YYYY-MM-DD..YYYY-MM-DD.",
       "anchor_required": "\"Every Nth\" needs a starting date.",
-      "base_cycle": "That day-set is built on this one (directly or through others), which would loop forever.",
-      "base_missing": "That base day-set no longer exists."
+      "base_cycle": "That day type builds on, or subtracts, this one (directly or through others), which would loop forever.",
+      "base_missing": "That day type no longer exists.",
+      "holidays_country": "Unknown country code for holidays."
     },
     "abort": {
-      "unknown_day_set": "That day-set no longer exists."
+      "unknown_day_set": "That day type no longer exists."
     }
   },
   "selector": {
@@ -255,12 +278,12 @@
   },
   "services": {
     "query_day_set": {
-      "name": "Query day-set",
-      "description": "Ask whether a date is in a day-set, and when the next matching date is.",
+      "name": "Query day type",
+      "description": "Ask whether a date is in a day type, and when the next matching date is.",
       "fields": {
         "day_set": {
-          "name": "Day-set",
-          "description": "The day-set id, shown on its calendar entity."
+          "name": "Day type",
+          "description": "The day type id, shown on its calendar entity."
         },
         "date": {
           "name": "Date",
@@ -270,11 +293,29 @@
     },
     "refresh": {
       "name": "Refresh",
-      "description": "Recompute every day-set now, instead of waiting for the nightly refresh."
+      "description": "Recompute every day type now, instead of waiting for the periodic refresh."
+    },
+    "list_holidays": {
+      "name": "List holidays",
+      "description": "The holiday names known for a country, for picking which ones you still work.",
+      "fields": {
+        "country": {
+          "name": "Country",
+          "description": "ISO code, e.g. US."
+        },
+        "subdiv": {
+          "name": "State or region",
+          "description": "Optional, e.g. IL."
+        },
+        "year": {
+          "name": "Year",
+          "description": "Defaults to this year."
+        }
+      }
     },
     "set_day_set": {
-      "name": "Set day-set",
-      "description": "Create a day-set (no id) or update one (with id). Same fields and same rules as the Configure form; the change is live after a short reload.",
+      "name": "Set day type",
+      "description": "Create a day type (no id) or update one (with id). Same fields and same rules as the Configure form; the change is live after a short reload.",
       "fields": {
         "id": {
           "name": "Id",
@@ -290,7 +331,7 @@
         },
         "base_day_set": {
           "name": "Built on",
-          "description": "Id of another day-set to start from."
+          "description": "Id of another day type to start from."
         },
         "base_calendars": {
           "name": "Calendars",
@@ -299,6 +340,26 @@
         "base_dates": {
           "name": "Dates",
           "description": "Single dates and ranges."
+        },
+        "holidays_country": {
+          "name": "Holidays country",
+          "description": "ISO code; enables the holidays source."
+        },
+        "holidays_subdiv": {
+          "name": "Holidays state/region",
+          "description": ""
+        },
+        "holidays_observed": {
+          "name": "Holidays observed",
+          "description": "Shift weekend holidays to the observed weekday (default on)."
+        },
+        "holidays_remove": {
+          "name": "Holidays you still work",
+          "description": "List of holiday names to drop."
+        },
+        "exclude_day_sets": {
+          "name": "Minus day types",
+          "description": "List of day type ids whose dates are removed."
         },
         "exclude_calendars": {
           "name": "Cancelled by calendars",
@@ -309,8 +370,8 @@
           "description": ""
         },
         "exclude_match": {
-          "name": "Cancel only when entry matches",
-          "description": ""
+          "name": "Cancel only when the title has",
+          "description": "Whole-word match on the event title; per-calendar rules as `calendar.x: #do`."
         },
         "force_calendars": {
           "name": "Always included by calendars",
@@ -321,7 +382,7 @@
           "description": ""
         },
         "force_match": {
-          "name": "Force only when entry matches",
+          "name": "Force only when the title has",
           "description": ""
         },
         "pick": {
@@ -353,14 +414,14 @@
           "description": ""
         },
         "expose_calendar": {
-          "name": "Show as calendar",
+          "name": "Show in the calendar panel",
           "description": ""
         }
       }
     },
     "remove_day_set": {
-      "name": "Remove day-set",
-      "description": "Delete a day-set. Refused while any schedule or day-set still depends on it.",
+      "name": "Remove day type",
+      "description": "Delete a day type. Refused while any schedule or day type still depends on it.",
       "fields": {
         "id": {
           "name": "Id",

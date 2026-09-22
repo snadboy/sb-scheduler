@@ -12,6 +12,8 @@
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/snadboy/sb-scheduler/issues",
-  "requirements": [],
-  "version": "0.4.2"
+  "requirements": [
+    "holidays>=0.104"
+  ],
+  "version": "0.5.0"
 }

@@ -26,7 +26,7 @@ from .const import (
     REFRESH_MINUTE,
     SIGNAL_DAY_SETS_UPDATED,
 )
-from .day_set import DaySet, order_by_dependency
+from .day_set import DaySet, depends_on, order_by_dependency
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,9 +42,9 @@ class DaySetRegistry:
         self._ordered, unresolved = order_by_dependency(configs)
         for cfg in unresolved:
             _LOGGER.error(
-                "Day-set '%s' builds on '%s', which is missing or part of a "
-                "cycle; it will be evaluated with an empty base",
-                cfg.get("id"), cfg.get("base_day_set"),
+                "Day type '%s' depends on %s, which is missing or part of a "
+                "cycle; it will be evaluated with that dependency empty",
+                cfg.get("id"), depends_on(cfg),
             )
         self._unresolved = {c["id"] for c in unresolved}
         self.day_sets: dict[str, DaySet] = {
@@ -110,7 +110,7 @@ class DaySetRegistry:
                 continue
             if anchor < floor:
                 _LOGGER.warning(
-                    "Day-set '%s' anchors at %s, older than %d days; the "
+                    "Day type '%s' anchors at %s, older than %d days; the "
                     "stride is counted from %s instead, which may shift its "
                     "phase. Re-anchor it on a recent eligible date.",
                     ds.id, anchor, MAX_ANCHOR_AGE_DAYS, floor,
@@ -134,10 +134,18 @@ class DaySetRegistry:
         for cfg in self._ordered:
             day_set = self.day_sets[cfg["id"]]
             base_set = None
-            if day_set.base_day_set and day_set.id not in self._unresolved:
-                base = self.day_sets.get(day_set.base_day_set)
-                base_set = set(base._eligible) if base else None
-            await day_set.async_refresh(self.hass, start, days=days, base_set=base_set)
+            exclude_set: set[datetime.date] = set()
+            if day_set.id not in self._unresolved:
+                if day_set.base_day_set:
+                    base = self.day_sets.get(day_set.base_day_set)
+                    base_set = set(base._eligible) if base else None
+                for other_id in day_set.exclude_day_sets:
+                    other = self.day_sets.get(other_id)
+                    if other:
+                        exclude_set |= other._eligible
+            await day_set.async_refresh(
+                self.hass, start, days=days, base_set=base_set, exclude_set=exclude_set
+            )
         async_dispatcher_send(self.hass, SIGNAL_DAY_SETS_UPDATED)
         _LOGGER.debug(
             "Refreshed %d day-set(s) in %.0f ms (%s)",

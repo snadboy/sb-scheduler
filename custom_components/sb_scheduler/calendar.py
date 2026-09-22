@@ -76,6 +76,12 @@ class DaySetCalendar(CalendarEntity):
             "inverted": self._day_set.invert,
             "offset_days": self._day_set.offset_days,
             "base_day_set": self._day_set.base_day_set or None,
+            "exclude_day_sets": self._day_set.exclude_day_sets or None,
+            "holidays": (
+                f"{self._day_set.holidays_country}"
+                f"{'/' + self._day_set.holidays_subdiv if self._day_set.holidays_subdiv else ''}"
+                if self._day_set.holidays_country else None
+            ),
             "pick": self._day_set.describe_pick() or None,
             "months": self._day_set.months or None,
         }

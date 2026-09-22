@@ -107,6 +107,25 @@ set_day_set:
       example: '2026-12-25, 2027-06-05..2027-08-17'
       selector:
         text:
+    holidays_country:
+      example: US
+      selector:
+        text:
+    holidays_subdiv:
+      example: IL
+      selector:
+        text:
+    holidays_observed:
+      selector:
+        boolean:
+    holidays_remove:
+      example: '["Columbus Day", "Veterans Day"]'
+      selector:
+        object:
+    exclude_day_sets:
+      example: '["holiday"]'
+      selector:
+        object:
     exclude_calendars:
       selector:
         object:
@@ -165,3 +184,20 @@ remove_day_set:
       example: election_day
       selector:
         text:
+
+list_holidays:
+  fields:
+    country:
+      required: true
+      example: US
+      selector:
+        text:
+    subdiv:
+      example: IL
+      selector:
+        text:
+    year:
+      selector:
+        number:
+          min: 2000
+          max: 2100

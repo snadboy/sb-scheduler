@@ -39,6 +39,20 @@ CONF_INCLUDE_DATES = "include_dates"
 # from each needing their own calendar source: they derive from Tuesday and
 # Monday. Evaluated in dependency order; a cycle is an error, not a hang.
 CONF_BASE_DAY_SET = "base_day_set"
+# ...and it can SUBTRACT other day-sets: their dates land in the veto tier.
+# Workday = Mon–Fri minus Holiday; Day Off = Mon–Fri minus Workday. The
+# mirror of base_day_set, and the same dependency ordering covers both.
+CONF_EXCLUDE_DAY_SETS = "exclude_day_sets"
+
+# A native HOLIDAYS source in the base tier, computed with the `holidays`
+# library (the one the Workday integration uses), so a holiday day-set needs
+# no other integration's calendar — and no boot race. Country enables it.
+CONF_HOLIDAYS_COUNTRY = "holidays_country"
+CONF_HOLIDAYS_SUBDIV = "holidays_subdiv"
+CONF_HOLIDAYS_OBSERVED = "holidays_observed"
+# Names of holidays the user does NOT get off ("Columbus Day"). Matched with
+# pop_named, which also drops the "(observed)" twin.
+CONF_HOLIDAYS_REMOVE = "holidays_remove"
 
 # PICK narrows the eligible dates to a cadence or an ordinal:
 #   none          — every eligible date (the default, and the old behaviour)

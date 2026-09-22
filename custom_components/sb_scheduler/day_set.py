@@ -20,17 +20,27 @@ from dataclasses import dataclass, field
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+try:
+    import holidays as _holidays_lib
+except ImportError:  # offline tests without the library; HA installs it (manifest)
+    _holidays_lib = None
+
 from .const import (
     CONF_BASE_CALENDARS,
     CONF_BASE_DATES,
     CONF_BASE_DAY_SET,
     CONF_EXCLUDE_CALENDARS,
     CONF_EXCLUDE_DATES,
+    CONF_EXCLUDE_DAY_SETS,
     CONF_EXCLUDE_MATCH,
     CONF_EXPOSE_CALENDAR,
     CONF_FORCE_CALENDARS,
     CONF_FORCE_DATES,
     CONF_FORCE_MATCH,
+    CONF_HOLIDAYS_COUNTRY,
+    CONF_HOLIDAYS_OBSERVED,
+    CONF_HOLIDAYS_REMOVE,
+    CONF_HOLIDAYS_SUBDIV,
     CONF_ID,
     CONF_INCLUDE_CALENDARS,
     CONF_INCLUDE_DATES,
@@ -64,12 +74,25 @@ NOT_READY_MARKERS = (
 RANGE_SEP = ".."
 
 
-def order_by_dependency(configs: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Sort day-set configs so every base_day_set is evaluated before its user.
+def depends_on(cfg: dict) -> list[str]:
+    """Every day-set this config reads: the one it builds on and the ones it
+    subtracts. One list, so ordering and cycle checks treat them alike."""
+    out: list[str] = []
+    base = cfg.get(CONF_BASE_DAY_SET) or ""
+    if base:
+        out.append(base)
+    out += [d for d in (cfg.get(CONF_EXCLUDE_DAY_SETS) or []) if d]
+    return out
 
-    Returns (ordered, unresolved). Anything in `unresolved` names a base that
-    does not exist or sits on a cycle; the caller evaluates it with an empty
-    base and says so, rather than hanging or silently producing nothing.
+
+def order_by_dependency(configs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Sort day-set configs so every day-set is evaluated after the ones it
+    builds on or subtracts.
+
+    Returns (ordered, unresolved). Anything in `unresolved` names a dependency
+    that does not exist or sits on a cycle; the caller evaluates it with that
+    dependency empty and says so, rather than hanging or silently producing
+    nothing.
     """
     by_id = {c[CONF_ID]: c for c in configs}
     ordered: list[dict] = []
@@ -78,14 +101,14 @@ def order_by_dependency(configs: list[dict]) -> tuple[list[dict], list[dict]]:
     while pending:
         progressed = False
         for cfg in list(pending):
-            base = cfg.get(CONF_BASE_DAY_SET) or ""
-            if not base or base in done:
+            deps = depends_on(cfg)
+            if all(d in done for d in deps):
                 ordered.append(cfg)
                 done.add(cfg[CONF_ID])
                 pending.remove(cfg)
                 progressed = True
-            elif base not in by_id:
-                # Missing base: nothing to wait for. Evaluate it anyway.
+            elif any(d not in by_id for d in deps):
+                # Missing dependency: nothing to wait for. Evaluate it anyway.
                 return ordered + [cfg] + [p for p in pending if p is not cfg], [cfg]
         if not progressed:
             # Every remaining config waits on another remaining one: a cycle.
@@ -97,21 +120,26 @@ def order_by_dependency(configs: list[dict]) -> tuple[list[dict], list[dict]]:
 # to this so a stray key can never land in the config entry.
 DAY_SET_FIELDS = (
     CONF_NAME, CONF_WEEKDAYS, CONF_BASE_DAY_SET, CONF_BASE_CALENDARS, CONF_BASE_DATES,
-    CONF_EXCLUDE_CALENDARS, CONF_EXCLUDE_DATES, CONF_EXCLUDE_MATCH,
+    CONF_HOLIDAYS_COUNTRY, CONF_HOLIDAYS_SUBDIV, CONF_HOLIDAYS_OBSERVED, CONF_HOLIDAYS_REMOVE,
+    CONF_EXCLUDE_DAY_SETS, CONF_EXCLUDE_CALENDARS, CONF_EXCLUDE_DATES, CONF_EXCLUDE_MATCH,
     CONF_FORCE_CALENDARS, CONF_FORCE_DATES, CONF_FORCE_MATCH,
     CONF_PICK, CONF_PICK_EVERY, CONF_PICK_ANCHOR, CONF_PICK_NTH, CONF_MONTHS,
     CONF_INVERT, CONF_OFFSET_DAYS, CONF_EXPOSE_CALENDAR,
 )
+
+# Old spellings of the base tier, still READ by from_config but never written.
+LEGACY_FIELDS = (CONF_INCLUDE_CALENDARS, CONF_INCLUDE_DATES)
 
 # One vocabulary for both the options form (codes) and the services (text).
 VALIDATION_MESSAGES = {
     "invalid_dates": "Could not read those dates. Use YYYY-MM-DD, separated by "
                      "commas, with ranges written as YYYY-MM-DD..YYYY-MM-DD.",
     "anchor_required": '"Every Nth" needs a starting date.',
-    "base_cycle": "That day-set is built on this one (directly or through "
-                  "others), which would loop forever.",
-    "base_missing": "That base day-set does not exist.",
-    "name_required": "A day-set needs a name.",
+    "base_cycle": "That day type builds on, or subtracts, this one (directly "
+                  "or through others), which would loop forever.",
+    "base_missing": "That day type does not exist.",
+    "name_required": "A day type needs a name.",
+    "holidays_country": "Unknown country code for holidays.",
 }
 
 
@@ -132,21 +160,27 @@ def validate_day_set(flat: dict, day_sets: list[dict], editing: str | None) -> d
     if flat.get(CONF_PICK) == PICK_EVERY and not flat.get(CONF_PICK_ANCHOR):
         errors["base"] = "anchor_required"
 
-    base = flat.get(CONF_BASE_DAY_SET) or ""
-    if base:
-        by_id = {d[CONF_ID]: d for d in day_sets}
-        seen: set[str] = set()
-        cur = base
-        while cur:
-            if cur == editing or cur in seen:
-                errors["base"] = "base_cycle"
-                break
-            cfg = by_id.get(cur)
-            if cfg is None:
-                errors["base"] = "base_missing"
-                break
+    # Dependencies (built on + subtracted) must exist and must not lead back
+    # here. A depth-first walk over BOTH kinds of edge; `editing` is this
+    # set's own id, which no path may reach.
+    by_id = {d[CONF_ID]: d for d in day_sets}
+    stack = list(depends_on(flat))
+    seen: set[str] = set()
+    while stack and "base" not in errors:
+        cur = stack.pop()
+        if cur == editing:
+            errors["base"] = "base_cycle"
+        elif cur in seen:
+            continue
+        elif cur not in by_id:
+            errors["base"] = "base_missing"
+        else:
             seen.add(cur)
-            cur = cfg.get(CONF_BASE_DAY_SET) or ""
+            stack += depends_on(by_id[cur])
+
+    country = (flat.get(CONF_HOLIDAYS_COUNTRY) or "").strip()
+    if country and holiday_names(country, flat.get(CONF_HOLIDAYS_SUBDIV) or "") is None:
+        errors["base"] = "holidays_country"
     return errors
 
 
@@ -255,6 +289,57 @@ def _dates_in_ranges(
     return out
 
 
+def _country_holidays(country: str, subdiv: str, years, observed: bool):
+    """The library's holiday map, or None for an unknown country/subdivision
+    (or no library). Country codes are ISO 3166-1 alpha-2, subdivisions the
+    library's own codes ("IL")."""
+    if _holidays_lib is None:
+        return None
+    try:
+        return _holidays_lib.country_holidays(
+            country.strip().upper(), subdiv=(subdiv or "").strip().upper() or None,
+            years=years, observed=observed,
+        )
+    except (NotImplementedError, KeyError, ValueError):
+        return None
+
+
+def holiday_names(country: str, subdiv: str = "", year: int | None = None) -> list[str] | None:
+    """Every holiday name the library knows for that country, so a form can
+    offer them as chips. Sampled over three years around `year` because some
+    holidays do not occur every year. None when the country is unknown."""
+    year = year or datetime.date.today().year
+    cal = _country_holidays(country, subdiv, range(year - 1, year + 2), observed=False)
+    if cal is None:
+        return None
+    return sorted({name for name in cal.values()})
+
+
+def holiday_dates(
+    country: str, subdiv: str, observed: bool, remove: list[str],
+    start: datetime.date, end: datetime.date,
+) -> set[datetime.date]:
+    """Holiday dates in [start, end], minus the named ones the user works.
+
+    `pop_named` drops the "(observed)" twin along with the day itself, which
+    is the behaviour the Workday integration has and what a user means by
+    "I don't get Columbus Day off".
+    """
+    cal = _country_holidays(country, subdiv, range(start.year, end.year + 1), observed)
+    if cal is None:
+        _LOGGER.error("Holidays for %r/%r are not available; treating as none", country, subdiv)
+        return set()
+    for name in remove:
+        name = (name or "").strip()
+        if not name:
+            continue
+        try:
+            cal.pop_named(name)
+        except KeyError:
+            _LOGGER.warning("No holiday named %r in %s; nothing removed", name, country)
+    return {d for d in cal if start <= d <= end}
+
+
 MATCH_RULE = re.compile(r"^\s*(calendar\.[a-z0-9_]+)\s*:\s*(.*?)\s*$")
 
 
@@ -283,20 +368,31 @@ def match_for(spec: str, entity_id: str) -> str:
     return per.get(entity_id, default)
 
 
-def _event_matches(event: dict, match: str) -> bool:
-    """Case-insensitive substring test against summary AND description.
+_TOKEN_TRIM = ".,;:!?()[]{}\"'"
 
-    Both are needed by real calendars: a days-off entry is distinguished by its
-    summary ("Workday"), while Google's holiday feed marks the real ones only
-    in the description ("Public holiday" vs "Observance").
+
+def _tokens(text: str) -> list[str]:
+    """Words of a title, lower-cased, with surrounding punctuation stripped —
+    so "#do." and "(#do)" both read as the token "#do"."""
+    return [t for t in (w.strip(_TOKEN_TRIM).lower() for w in text.split()) if t]
+
+
+def _event_matches(event: dict, match: str) -> bool:
+    """Whole-token match against the TITLE only.
+
+    A tag is a word, not a substring: "#do" must not fire on "#done", and a
+    note that mentions a tag in passing must not cancel a day — so the
+    description is not read. A multi-word rule ("Day off") matches as a
+    contiguous run of tokens.
     """
     if not match:
         return True
-    needle = match.strip().lower()
-    haystack = " ".join(
-        str(event.get(field) or "") for field in ("summary", "description")
-    ).lower()
-    return needle in haystack
+    needle = _tokens(match)
+    if not needle:
+        return True
+    words = _tokens(str(event.get("summary") or ""))
+    n = len(needle)
+    return any(words[i:i + n] == needle for i in range(len(words) - n + 1))
 
 
 async def _calendar_dates(
@@ -348,19 +444,54 @@ async def _calendar_dates(
     for event in events:
         if not _event_matches(event, match):
             continue
-        lo = _as_date(event.get("start"))
-        hi = _as_date(event.get("end"))
+        lo, last = _event_span(event.get("start"), event.get("end"))
         if lo is None:
             continue
-        if hi is None:
-            hi = lo + datetime.timedelta(days=1)
-        # All-day events are half-open: end is the morning after.
-        last = hi - datetime.timedelta(days=1) if hi > lo else lo
         cur = max(lo, start)
         while cur <= min(last, end):
             covered.add(cur)
             cur += datetime.timedelta(days=1)
     return covered
+
+
+def _event_span(start_value, end_value) -> tuple[datetime.date | None, datetime.date | None]:
+    """The first and LAST local dates an event covers, inclusive.
+
+    An all-day event is half-open — its end is the morning after — so a
+    one-day event ends on its own date. A timed event covers every local
+    date it touches (a two-hour "#do" block is a day off; 22:00 to 02:00 is
+    two days), except that an end falling exactly on midnight is exclusive,
+    so 22:00–00:00 is one day, not two.
+    """
+    lo = _as_date(start_value)
+    if lo is None:
+        return None, None
+    end_dt = _as_datetime(end_value)
+    if end_dt is not None:                                   # timed
+        local = dt_util.as_local(end_dt)
+        last = local.date()
+        if local.time() == datetime.time(0, 0) and last > lo:
+            last -= datetime.timedelta(days=1)
+        return lo, max(lo, last)
+    hi = _as_date(end_value)                                 # all-day
+    if hi is None:
+        return lo, lo
+    return lo, (hi - datetime.timedelta(days=1) if hi > lo else lo)
+
+
+def _as_datetime(value) -> datetime.datetime | None:
+    """A timed boundary as an aware datetime; None for an all-day date."""
+    if isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, datetime.date) or not value:
+        return None
+    if "T" not in str(value):
+        return None
+    try:
+        parsed = dt_util.parse_datetime(str(value))
+    except (ValueError, TypeError):
+        return None
+    return parsed
 
 
 def _as_date(value) -> datetime.date | None:
@@ -410,6 +541,12 @@ class DaySet:
     # Derivation: build on another day-set, narrow to a cadence or ordinal,
     # keep only some months. All default to "off", which is the old model.
     base_day_set: str = ""
+    exclude_day_sets: list[str] = field(default_factory=list)
+    # Native holidays source: a country code enables it.
+    holidays_country: str = ""
+    holidays_subdiv: str = ""
+    holidays_observed: bool = True
+    holidays_remove: list[str] = field(default_factory=list)
     pick: str = PICK_NONE
     pick_every: int = 1
     pick_anchor: str = ""
@@ -453,6 +590,11 @@ class DaySet:
             invert=bool(config.get(CONF_INVERT)),
             offset_days=int(config.get(CONF_OFFSET_DAYS) or 0),
             base_day_set=config.get(CONF_BASE_DAY_SET) or "",
+            exclude_day_sets=[d for d in (config.get(CONF_EXCLUDE_DAY_SETS) or []) if d],
+            holidays_country=(config.get(CONF_HOLIDAYS_COUNTRY) or "").strip(),
+            holidays_subdiv=(config.get(CONF_HOLIDAYS_SUBDIV) or "").strip(),
+            holidays_observed=bool(config.get(CONF_HOLIDAYS_OBSERVED, True)),
+            holidays_remove=[n for n in (config.get(CONF_HOLIDAYS_REMOVE) or []) if n],
             pick=config.get(CONF_PICK) or PICK_NONE,
             pick_every=int(config.get(CONF_PICK_EVERY) or 1),
             pick_anchor=config.get(CONF_PICK_ANCHOR) or "",
@@ -468,6 +610,11 @@ class DaySet:
         return [*self.base_calendars, *self.force_calendars, *self.exclude_calendars]
 
     @property
+    def depends_on(self) -> list[str]:
+        """Day-sets this one must be evaluated after."""
+        return ([self.base_day_set] if self.base_day_set else []) + list(self.exclude_day_sets)
+
+    @property
     def anchor_date(self) -> datetime.date | None:
         """The stride anchor as a date, or None when unset or unparseable."""
         if self.pick != PICK_EVERY or not self.pick_anchor:
@@ -476,7 +623,7 @@ class DaySet:
             return datetime.date.fromisoformat(self.pick_anchor[:10])
         except ValueError:
             _LOGGER.error(
-                "Day-set '%s' has an unreadable anchor %r; the stride is ignored",
+                "Day type '%s' has an unreadable anchor %r; the stride is ignored",
                 self.id, self.pick_anchor,
             )
             return None
@@ -498,10 +645,12 @@ class DaySet:
         start: datetime.date,
         days: int = HORIZON_DAYS,
         base_set: set[datetime.date] | None = None,
+        exclude_set: set[datetime.date] | None = None,
     ) -> None:
         """Recompute eligibility across the whole window.
 
-        `base_set` is the resolved eligibility of `base_day_set`, supplied by
+        `base_set` is the resolved eligibility of `base_day_set` and
+        `exclude_set` the union of the `exclude_day_sets`, both supplied by
         the registry, which evaluates day-sets in dependency order.
         """
         end = start + datetime.timedelta(days=days)
@@ -541,12 +690,19 @@ class DaySet:
         base = await collect(self.base_calendars, self.base_dates)
         if base_set:
             base |= base_set                     # built on another day-set
+        if self.holidays_country:
+            base |= holiday_dates(
+                self.holidays_country, self.holidays_subdiv, self.holidays_observed,
+                self.holidays_remove, calc_start, calc_end,
+            )
         forced = await collect(
             self.force_calendars, self.force_dates, self.force_match
         )
         vetoed = await collect(
             self.exclude_calendars, self.exclude_dates, self.exclude_match
         )
+        if exclude_set:
+            vetoed |= exclude_set                # minus other day-sets
 
         mask = {WEEKDAYS.index(d) for d in self.weekdays if d in WEEKDAYS}
 
@@ -598,7 +754,7 @@ class DaySet:
         self._missing_sources = missing
         if missing:
             _LOGGER.debug(
-                "Day-set '%s' computed without %s (not created yet); will "
+                "Day type '%s' computed without %s (not created yet); will "
                 "recompute when it appears", self.id, missing,
             )
 
@@ -607,7 +763,7 @@ class DaySet:
         if self._window and day > self._window[1]:
             # Past the horizon is worth saying: it means a real limit was hit.
             _LOGGER.warning(
-                "Day-set '%s' asked about %s, beyond its %s horizon",
+                "Day type '%s' asked about %s, beyond its %s horizon",
                 self.id, day, self._window[1],
             )
             return False
@@ -615,7 +771,7 @@ class DaySet:
             # Before the window is ordinary — a calendar view of an old month.
             # Not an error, and not worth a log line per rendered cell.
             _LOGGER.debug(
-                "Day-set '%s' asked about %s, before its %s window start",
+                "Day type '%s' asked about %s, before its %s window start",
                 self.id, day, self._window[0],
             )
             return False
@@ -640,12 +796,12 @@ class DaySet:
             # horizon is genuinely bare. Say so at a level that does not read
             # like an outage — the listener will fill it in.
             _LOGGER.warning(
-                "Day-set '%s' has no dates yet: waiting for %s to be created",
+                "Day type '%s' has no dates yet: waiting for %s to be created",
                 self.id, self._missing_sources,
             )
             return None
         _LOGGER.error(
-            "Day-set '%s' has no eligible date between %s and the %s-day horizon "
+            "Day type '%s' has no eligible date between %s and the %s-day horizon "
             "(%s). Nothing will be scheduled against it.",
             self.id,
             day,

@@ -17,7 +17,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_BASE_DAY_SET,
     CONF_DAY_SET,
     CONF_DAY_SETS,
     CONF_ID,
@@ -40,7 +39,7 @@ class DaySetRoster(SensorEntity):
 
     _attr_should_poll = False
     _attr_has_entity_name = False
-    _attr_name = "SB Scheduler Day-sets"
+    _attr_name = "SB Scheduler Day types"
     _attr_icon = "mdi:calendar-multiple"
 
     def __init__(self, entry: ConfigEntry, data) -> None:
@@ -84,7 +83,7 @@ class DaySetRoster(SensorEntity):
                 "used_by": {
                     "schedules": [s.get("name") for s in schedules if s.get(CONF_DAY_SET) == ds.id],
                     "day_sets": [o.id for o in self._data.day_sets.day_sets.values()
-                                 if o.base_day_set == ds.id],
+                                 if ds.id in o.depends_on],
                 },
             })
         # The marker the card looks for, so it never has to guess by name.
