@@ -420,3 +420,13 @@ Failures are reported separately by the action queue's loud-failure path.
 - Plain `<input>` elements, not `ha-textfield`: it renders invisible outside
   `ha-form`. Native `<select>` needs explicit `option` colours plus
   `color-scheme: light dark` or its popup ignores the theme.
+
+## 0.5.2 — successful actions are logged (2026-09-28)
+
+User (after SB Watch got action logging): "are SB Schedule events logged
+also?" — failures were (ERROR + `sb_scheduler_action_failed`), successes
+left only an unattributed state change. `ActionHandler.async_report_success`
+now writes a Logbook entry on each target ("turn on by schedule “Wake-up /
+Lamps on”"), fires `sb_scheduler_action` {schedule_id, schedule,
+schedule_entity, action, entity_id, data} and logs INFO. The switch sets
+`handler.label` / `handler.source_entity` before queueing.

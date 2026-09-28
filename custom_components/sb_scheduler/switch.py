@@ -292,6 +292,8 @@ class ScheduleEntity(SwitchEntity):
             )
             handler = self._handlers.get(step[CONF_STEP_ID])
             if handler is not None:
+                handler.label = f"{schedule.get('name')} / {step.get('name')}"
+                handler.source_entity = self.entity_id
                 await handler.async_queue_actions({
                     "conditions": step.get("conditions", []),
                     "actions": step.get(CONF_ACTIONS, []),

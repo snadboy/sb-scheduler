@@ -238,6 +238,8 @@ class ActionHandler:
         self._queues = {}
         self._timer = None
         self.id = schedule_id
+        self.label = None            # "Schedule / Step", set by the switch before it queues actions
+        self.source_entity = None    # the schedule switch's entity id
 
         async_dispatcher_connect(
             self.hass, "action_queue_finished", self.async_cleanup_queues
@@ -258,8 +260,12 @@ class ActionHandler:
 
             if entity not in self._queues:
                 self._queues[entity] = ActionQueue(
-                    self.hass, self.id, conditions, condition_type, track_conditions
+                    self.hass, self.id, conditions, condition_type, track_conditions,
+                    label=self.label, source_entity=self.source_entity,
                 )
+            else:
+                self._queues[entity].label = self.label
+                self._queues[entity].source_entity = self.source_entity
 
             self._queues[entity].add_action(action)
 
@@ -324,10 +330,14 @@ class ActionQueue:
         conditions: list,
         condition_type: str,
         track_conditions: bool,
+        label: str | None = None,
+        source_entity: str | None = None,
     ):
         """create a new action queue"""
         self.hass = hass
         self.id = id
+        self.label = label                    # "Schedule / Step" for the Logbook entry
+        self.source_entity = source_entity    # the schedule switch
         self._timer = None
         self._action_entities = []
         self._condition_entities = []
@@ -508,12 +518,36 @@ class ActionQueue:
         if reason is None:
             try:
                 await async_call_from_config(self.hass, task)
+                self.async_report_success(service, entity_id, task)
                 return True
             except Exception as err:  # noqa: BLE001 - surface whatever the call raises
                 reason = str(err) or err.__class__.__name__
 
         self.async_report_failure(service, entity_id, reason)
         return False
+
+    @callback
+    def async_report_success(self, service, entity_id, task: dict):
+        """Make a schedule's action visible: a Logbook entry on each target (so the
+        state change says which schedule caused it), an event, and a log line."""
+        targets = entity_id if isinstance(entity_id, list) else ([entity_id] if entity_id else [])
+        label = self.label or self.id
+        what = service.split(".", 1)[1].replace("_", " ") if "." in service else service
+        _LOGGER.info("[%s]: %s on %s by schedule '%s'", self.id, service, ", ".join(targets) or "-", label)
+        for target in targets:
+            self.hass.async_create_task(self.hass.services.async_call("logbook", "log", {
+                "name": "SB Scheduler", "entity_id": target, "domain": const.DOMAIN,
+                "message": f"{what} by schedule “{label}”",
+            }, blocking=False))
+        if not targets and self.source_entity:
+            self.hass.async_create_task(self.hass.services.async_call("logbook", "log", {
+                "name": "SB Scheduler", "entity_id": self.source_entity, "domain": const.DOMAIN,
+                "message": f"ran {service} (schedule “{label}”)",
+            }, blocking=False))
+        self.hass.bus.async_fire(const.EVENT_ACTION, {
+            "schedule_id": self.id, "schedule": label, "schedule_entity": self.source_entity,
+            "action": service, ATTR_ENTITY_ID: entity_id, "data": task.get("data") or task.get("service_data") or {},
+        })
 
     @callback
     def async_report_failure(self, service, entity_id, reason: str):

@@ -163,6 +163,7 @@ STATE_INIT = "init"
 
 EVENT_STARTED = f"{DOMAIN}_started"
 EVENT_ACTION_FAILED = f"{DOMAIN}_action_failed"
+EVENT_ACTION = f"{DOMAIN}_action"          # fired for every action that ran
 
 CONF_NOTIFY_ON_FAILURE = "notify_on_failure"
 DEFAULT_NOTIFY_ON_FAILURE = True
