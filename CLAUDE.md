@@ -203,14 +203,22 @@ Workday's veto tier is now `[calendar.days_off, calendar.anderson]` with
   plain `python3`, no HA needed. `day_set.py`'s few HA imports are stubbed;
   `timer.py` has none at all, so the replaced scheduling core tests natively.
 
-## Deploying to HA (no HACS yet)
+## Installing — HACS since 2026-10-05
+
+**HACS custom repository `snadboy/sb-scheduler`, id 1377669716 (Integration).** A
+release = tag + GitHub release, then HACS (`hacs/repository/refresh` +
+`hacs/repository/download`, or the HACS UI). The hand deploy below is for testing a
+change BEFORE releasing it; HACS-written files are root-owned, so extract with
+`sudo tar`, and release afterwards so HACS and the box agree again.
+
+### Hand deploy (testing only)
 
 `scp` fails — the HAOS SSH add-on has no sftp subsystem. Pipe through stdin:
 
 ```bash
 tar czf /tmp/sb.tgz -C custom_components sb_scheduler
 ssh snadboy@homeassistant "cat > /tmp/sb.tgz" < /tmp/sb.tgz
-ssh snadboy@homeassistant "cd /config/custom_components && tar xzf /tmp/sb.tgz && rm /tmp/sb.tgz"
+ssh snadboy@homeassistant "cd /config/custom_components && sudo tar xzf /tmp/sb.tgz && rm /tmp/sb.tgz"
 ```
 
 `rm -rf` on the deployed dir fails: `__pycache__` is root-owned (HA runs as root
