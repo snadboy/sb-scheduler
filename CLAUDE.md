@@ -430,3 +430,11 @@ now writes a Logbook entry on each target ("turn on by schedule “Wake-up /
 Lamps on”"), fires `sb_scheduler_action` {schedule_id, schedule,
 schedule_entity, action, entity_id, data} and logs INFO. The switch sets
 `handler.label` / `handler.source_entity` before queueing.
+
+## 0.5.3 — `schedule_name` attribute (2026-10-05)
+
+The switch publishes the schedule's OWN name. HA 2026.9 shows `friendly_name` with the
+device prefix ("SB Garden Lights"); the card used to fill its editor from that, so every
+Save through Edit stored "SB …" (HA does not double it on screen, which hid the bug —
+"SB Garden Irrigation" is stored WITH the prefix today). Card ≥ 0.15.0 reads
+`schedule_name`.

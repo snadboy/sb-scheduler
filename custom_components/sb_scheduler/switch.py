@@ -135,6 +135,10 @@ class ScheduleEntity(SwitchEntity):
             })
         return {
             CONF_SCHEDULE_ID: self.schedule_id,
+            # The schedule's OWN name. HA 2026.9 prefixes the device name ("SB ")
+            # onto friendly_name, so an editor that round-trips friendly_name
+            # would save "SB Garden Lights" and display "SB SB Garden Lights".
+            "schedule_name": schedule.get("name"),
             CONF_DAY_SET: schedule.get(CONF_DAY_SET),
             CONF_NEGATE: bool(schedule.get(CONF_NEGATE)),
             CONF_STEPS: steps,
