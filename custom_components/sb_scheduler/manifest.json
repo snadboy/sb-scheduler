@@ -6,7 +6,8 @@
   ],
   "config_flow": true,
   "dependencies": [
-    "calendar"
+    "calendar",
+    "sb_ui_kit"
   ],
   "documentation": "https://github.com/snadboy/sb-scheduler",
   "integration_type": "service",
@@ -15,5 +16,5 @@
   "requirements": [
     "holidays>=0.104"
   ],
-  "version": "0.5.3"
+  "version": "0.5.4"
 }
