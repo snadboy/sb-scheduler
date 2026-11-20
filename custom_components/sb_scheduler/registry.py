@@ -26,7 +26,7 @@ from .const import (
     REFRESH_MINUTE,
     SIGNAL_DAY_SETS_UPDATED,
 )
-from .day_set import DaySet, depends_on, order_by_dependency
+from .day_set import DaySet, depends_on, order_by_dependency, preload_holidays
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +58,13 @@ class DaySetRegistry:
 
     async def async_setup(self) -> None:
         """Compute the first window and arm the refresh triggers."""
+        pairs = {
+            (d.holidays_country, d.holidays_subdiv)
+            for d in self.day_sets.values()
+            if d.holidays_country
+        }
+        if pairs:
+            await self.hass.async_add_executor_job(preload_holidays, pairs)
         await self.async_refresh()
 
         # Just after midnight, so "today" never falls off the front of the window.

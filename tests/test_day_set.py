@@ -712,6 +712,60 @@ check("Wed: '#do' only in the DESCRIPTION does NOT cancel (title only)", wd.is_e
 check("Thu: an untagged Anderson entry does NOT cancel", wd.is_eligible(D("2026-09-24")), True)
 check("Fri: an all-day event TITLED #do cancels", wd.is_eligible(D("2026-09-25")), False)
 
+# --- the "nothing to find" lines: once per transition, at a fitting level --
+print("\nempty-horizon logging")
+import logging  # noqa: E402
+
+
+class _Capture(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+cap = _Capture()
+_day_set._LOGGER.addHandler(cap)
+_day_set._LOGGER.setLevel(logging.DEBUG)
+
+
+def levels(ds_id):
+    return [r.levelname for r in cap.records if f"'{ds_id}'" in r.getMessage()]
+
+
+vac = DaySet(id="vacation", name="Vacation", force_calendars=["calendar.anderson"],
+             force_match="calendar.anderson: #vac")
+check("a #vac-tagged calendar set is calendar-only", vac.calendar_only, True)
+unbooked = FakeHass({"calendar.anderson": [allday("2026-09-25", "2026-09-26", "#do")]})
+booked = FakeHass({"calendar.anderson": [allday("2026-10-01", "2026-10-03", "#vac")]})
+asyncio.run(vac.async_refresh(unbooked, D("2026-09-20"), days=30))
+for _ in range(5):
+    vac.next_date_on_or_after(D("2026-09-20"))
+check("nothing booked: one INFO line, not one per ask", levels("vacation"), ["INFO"])
+asyncio.run(vac.async_refresh(booked, D("2026-09-20"), days=30))
+check("a booking is found", vac.next_date_on_or_after(D("2026-09-20")), D("2026-10-01"))
+asyncio.run(vac.async_refresh(unbooked, D("2026-09-20"), days=30))
+for _ in range(3):
+    vac.next_date_on_or_after(D("2026-09-20"))
+check("said again once the booking is gone", levels("vacation"), ["INFO", "INFO"])
+
+never = DaySet(id="never", name="Never", base_dates="2020-01-01")
+check("a date-list set is not calendar-only", never.calendar_only, False)
+asyncio.run(never.async_refresh(nohass, D("2026-09-20"), days=30))
+for _ in range(3):
+    never.next_date_on_or_after(D("2026-09-20"))
+check("a set that can never match: one ERROR line", levels("never"), ["ERROR"])
+
+wkd = DaySet(id="wkd", name="Wkd", weekdays=["mon"], base_calendars=["calendar.x"])
+check("a weekday mask is not calendar-only", wkd.calendar_only, False)
+
+if _day_set._holidays_lib is not None:
+    _day_set.preload_holidays({("US", "")})
+    check("preload_holidays loads the country",
+          "holidays.countries.united_states" in sys.modules, True)
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S)")

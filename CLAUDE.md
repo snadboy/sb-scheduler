@@ -157,7 +157,7 @@ dashboards, automations, scripts, helpers).
 - Tests need the library for the holidays block: on sdevs there is no pip;
   the wheel is unpacked at `~/.local/lib/python3-extra` — run with
   `PYTHONPATH=~/.local/lib/python3-extra python3 tests/test_day_set.py`
-  (177 checks; without it the holidays block skips, 160).
+  (185 checks; without it the holidays block skips, 170). As of 2026-11-20 the unpacked wheel cannot import (`dateutil` is missing there), so the block skips.
 
 ## Days off from the user's Google Calendar (2026-09-21, v0.4.1)
 

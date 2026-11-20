@@ -293,8 +293,10 @@ def _register_services(hass: HomeAssistant) -> None:
         """The holiday names the library knows for a country, so the card can
         offer "which of these do you still work?" as chips rather than a
         free-text field that has to match a name exactly."""
-        names = holiday_names(call.data["country"], call.data.get("subdiv") or "",
-                              call.data.get("year"))
+        names = await hass.async_add_executor_job(
+            holiday_names, call.data["country"], call.data.get("subdiv") or "",
+            call.data.get("year"),
+        )
         if names is None:
             raise ServiceValidationError(VALIDATION_MESSAGES["holidays_country"])
         return {"country": call.data["country"].upper(), "names": names}

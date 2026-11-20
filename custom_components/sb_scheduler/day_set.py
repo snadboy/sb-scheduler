@@ -304,6 +304,18 @@ def _country_holidays(country: str, subdiv: str, years, observed: bool):
         return None
 
 
+def preload_holidays(pairs) -> None:
+    """Import the holiday data for these (country, subdiv) pairs.
+
+    The library imports each country's module on first use, and HA flags that
+    as a blocking call when it happens in the event loop. Run this in the
+    executor before the first refresh; later calls find the module loaded.
+    """
+    year = datetime.date.today().year
+    for country, subdiv in pairs:
+        _country_holidays(country, subdiv, [year], True)
+
+
 def holiday_names(country: str, subdiv: str = "", year: int | None = None) -> list[str] | None:
     """Every holiday name the library knows for that country, so a form can
     offer them as chips. Sampled over three years around `year` because some
@@ -560,6 +572,11 @@ class DaySet:
     )
     # Source calendars that did not exist at the last refresh (boot race).
     _missing_sources: list[str] = field(default_factory=list, repr=False)
+    # "Nothing to find" is said once per transition, not once per ask: the
+    # sensor and the calendar entity ask on every state write, which made 75
+    # ERROR lines in three hours for a vacation calendar with nothing booked.
+    _reported_empty: bool = field(default=False, repr=False)
+    _reported_missing: bool = field(default=False, repr=False)
 
     @classmethod
     def from_config(cls, config: dict) -> DaySet:
@@ -752,11 +769,27 @@ class DaySet:
         self._eligible = {d for d in eligible if start <= d <= end}
         self._window = (start, end)
         self._missing_sources = missing
+        if self._eligible:
+            self._reported_empty = False
+        if not missing:
+            self._reported_missing = False
         if missing:
             _LOGGER.debug(
                 "Day type '%s' computed without %s (not created yet); will "
                 "recompute when it appears", self.id, missing,
             )
+
+    @property
+    def calendar_only(self) -> bool:
+        """True when only calendar events can put a date in this set.
+
+        Then an empty horizon means "nothing booked yet" (a vacation calendar
+        with no trip on it), not a set that can never match.
+        """
+        return bool(self.base_calendars or self.force_calendars) and not (
+            self.weekdays or self.base_dates or self.force_dates
+            or self.holidays_country or self.base_day_set or self.invert
+        )
 
     def is_eligible(self, day: datetime.date) -> bool:
         """Whether `day` is in this set. False outside the computed window."""
@@ -795,9 +828,21 @@ class DaySet:
             # Empty because a source has not been created yet, not because the
             # horizon is genuinely bare. Say so at a level that does not read
             # like an outage — the listener will fill it in.
-            _LOGGER.warning(
-                "Day type '%s' has no dates yet: waiting for %s to be created",
-                self.id, self._missing_sources,
+            if not self._reported_missing:
+                self._reported_missing = True
+                _LOGGER.warning(
+                    "Day type '%s' has no dates yet: waiting for %s to be created",
+                    self.id, self._missing_sources,
+                )
+            return None
+        if self._reported_empty:
+            return None
+        self._reported_empty = True
+        if self.calendar_only:
+            _LOGGER.info(
+                "Day type '%s' has no matching calendar events between %s and the "
+                "%s-day horizon (%s); nothing is booked yet.",
+                self.id, day, HORIZON_DAYS, self._window[1],
             )
             return None
         _LOGGER.error(
